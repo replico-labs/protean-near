@@ -1,0 +1,68 @@
+{
+  "orbit": {
+    "roles": [
+      {
+        "name": "governance",
+        "kind": {
+          "Group": [
+            "orbit1.testnet"
+          ]
+        },
+        "permissions": [
+          "*:AddProposal",
+          "*:VoteApprove",
+          "*:VoteReject",
+          "*:VoteRemove",
+          "*:Finalize"
+        ],
+        "vote_policy": {}
+      }
+    ],
+    "default_vote_policy": {
+      "weight_kind": "RoleWeight",
+      "quorum": "0",
+      "threshold": [
+        1,
+        1
+      ]
+    },
+    "proposal_bond": "0",
+    "proposal_period": "604800000000000",
+    "bounty_bond": "0",
+    "bounty_forgiveness_period": "86400000000000"
+  },
+  "board": {
+    "roles": [
+      {
+        "name": "governance",
+        "kind": {
+          "Group": [
+            "m1.testnet",
+            "m2.testnet",
+            "m3.testnet"
+          ]
+        },
+        "permissions": [
+          "*:AddProposal",
+          "*:VoteApprove",
+          "*:VoteReject",
+          "*:VoteRemove",
+          "*:Finalize"
+        ],
+        "vote_policy": {}
+      }
+    ],
+    "default_vote_policy": {
+      "weight_kind": "RoleWeight",
+      "quorum": "0",
+      "threshold": [
+        1,
+        2
+      ]
+    },
+    "proposal_bond": "0",
+    "proposal_period": "604800000000000",
+    "bounty_bond": "0",
+    "bounty_forgiveness_period": "86400000000000"
+  }
+}

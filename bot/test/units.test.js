@@ -7,7 +7,7 @@ import { proposalButtons, encodeButton, decodeButton } from "../src/buttons.js";
 import { parseCommandText, splitForTelegram } from "../src/platforms/telegram.js";
 import { argsFromOptions, buildSlashCommands, toDiscordMarkdown } from "../src/platforms/discord.js";
 import { COMMANDS } from "../src/platforms/commands.js";
-import { kindFixtures } from "./kindFixtures.js";
+import { kindFixtures, modelFixtures, policyFixtures } from "./kindFixtures.js";
 
 test("amounts convert without floating point", () => {
   assert.equal(toUnits("1.5", 24), 1_500_000_000_000_000_000_000_000n);
@@ -20,9 +20,11 @@ test("amounts convert without floating point", () => {
   assert.equal(fromUnits(0n, 24), "0");
 });
 
-test("the committed kind fixtures match kinds.js", () => {
-  const committed = JSON.parse(readFileSync(new URL("./fixtures/kinds.json", import.meta.url)));
-  assert.deepEqual(committed, JSON.parse(JSON.stringify(kindFixtures())), "run: node scripts/write-kind-fixtures.js");
+test("the committed fixtures match kinds.js and models.js", () => {
+  for (const [file, make] of [["kinds.json", kindFixtures], ["models.json", modelFixtures], ["policies.json", policyFixtures]]) {
+    const committed = JSON.parse(readFileSync(new URL(`./fixtures/${file}`, import.meta.url)));
+    assert.deepEqual(committed, JSON.parse(JSON.stringify(make())), `${file} is stale: run node scripts/write-kind-fixtures.js`);
+  }
 });
 
 test("kinds read as sentences", () => {
@@ -34,9 +36,11 @@ test("kinds read as sentences", () => {
 });
 
 test("buttons round-trip and refuse forgeries", () => {
-  const rows = proposalButtons(7, "InProgress");
-  assert.deepEqual(rows[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against"]);
-  assert.deepEqual(proposalButtons(7, "Passed")[0], [{ label: "▶️ Execute", cmd: "execute 7" }]);
+  assert.deepEqual(proposalButtons("tokenWeighted", 7, "Active")[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against", "vote 7 abstain"]);
+  assert.deepEqual(proposalButtons("board", 7, "InProgress")[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against"]);
+  assert.deepEqual(proposalButtons("optimistic", 7, "ChallengeWindow")[0].map((b) => b.cmd), ["challenge 7"]);
+  assert.deepEqual(proposalButtons("conviction", 7, "Active")[0].map((b) => b.cmd), ["support 7", "queue 7"]);
+  assert.deepEqual(proposalButtons("tokenWeighted", 7, "Succeeded")[0], [{ label: "▶️ Execute", cmd: "execute 7" }]);
   assert.deepEqual(decodeButton(encodeButton("vote 7 for")), ["vote", ["7", "for"]]);
   assert.equal(decodeButton("c:vote 7; rm"), null);
   assert.equal(decodeButton("x:vote 7 for"), null);

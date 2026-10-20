@@ -1638,9 +1638,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "orbit"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit-common",
+ "uint 0.10.2",
+]
+
+[[package]]
 name = "orbit-common"
 version = "0.1.0"
 dependencies = [
+ "near-sdk",
+]
+
+[[package]]
+name = "orbit-staking"
+version = "0.1.0"
+dependencies = [
+ "near-contract-standards",
  "near-sdk",
 ]
 
@@ -1649,6 +1666,7 @@ name = "orbits-core-tests"
 version = "0.1.0"
 dependencies = [
  "near-sdk",
+ "orbit",
  "orbit-common",
  "serde_json",
  "sputnikdao2",
@@ -1769,7 +1787,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05e4722c697a58a99d5d06a08c30821d7c082a4632198de1eaa5a6c22ef42373"
 dependencies = [
  "fixed-hash",
- "uint",
+ "uint 0.9.5",
 ]
 
 [[package]]
@@ -2219,15 +2237,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sputnik-staking"
-version = "1.0.0"
-dependencies = [
- "hex",
- "near-contract-standards",
- "near-sdk",
-]
-
-[[package]]
 name = "sputnikdao2"
 version = "2.3.1"
 source = "git+https://github.com/near-daos/sputnik-dao-contract?rev=5434a59dec23ee0c49df8c8c4350c208a7e75b0b#5434a59dec23ee0c49df8c8c4350c208a7e75b0b"
@@ -2414,14 +2423,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
-name = "token-weight-orbit"
-version = "0.1.0"
-dependencies = [
- "near-sdk",
- "orbit-common",
-]
-
-[[package]]
 name = "toml_datetime"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2493,6 +2494,18 @@ name = "uint"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76f64bba2c53b04fcab63c01a7d7427eadc821e3bc48c34dc9ba29c501164b52"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "hex",
+ "static_assertions",
+]
+
+[[package]]
+name = "uint"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2833f28e3adbd1b867292ee4053252ea89ab85e44e5e4701ffead8cada0539fa"
 dependencies = [
  "byteorder",
  "crunchy",

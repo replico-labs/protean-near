@@ -1,0 +1,127 @@
+{
+  "tokenWeighted": {
+    "TokenWeighted": {
+      "quorum_bps": 2000,
+      "approval_bps": 5000,
+      "voting_delay": "0",
+      "voting_period": "3600000000000",
+      "timelock": "60000000000",
+      "execution_period": "259200000000000",
+      "proposal_threshold": "100000000000000000000"
+    }
+  },
+  "quadratic": {
+    "Quadratic": {
+      "quorum_bps": 2000,
+      "approval_bps": 5000,
+      "voting_delay": "0",
+      "voting_period": "3600000000000",
+      "timelock": "60000000000",
+      "execution_period": "259200000000000",
+      "proposal_threshold": "100000000000000000000"
+    }
+  },
+  "liquid": {
+    "Liquid": {
+      "quorum_bps": 2000,
+      "approval_bps": 5000,
+      "voting_delay": "0",
+      "voting_period": "3600000000000",
+      "timelock": "60000000000",
+      "execution_period": "259200000000000",
+      "proposal_threshold": "100000000000000000000"
+    }
+  },
+  "optimistic": {
+    "Optimistic": {
+      "rules": {
+        "quorum_bps": 2000,
+        "approval_bps": 5000,
+        "voting_delay": "0",
+        "voting_period": "3600000000000",
+        "timelock": "60000000000",
+        "execution_period": "259200000000000",
+        "proposal_threshold": "100000000000000000000"
+      },
+      "challenge_period": "3600000000000",
+      "challenge_bond": "1000000000000000000000"
+    }
+  },
+  "conviction": {
+    "Conviction": {
+      "growth_per_second": "100000000000000000000",
+      "min_conviction": "50000000000000000000000",
+      "near_multiplier": "1000000000000000000000",
+      "token_multiplier": "1000000000000000000000000",
+      "governance_conviction": "250000000000000000000000",
+      "timelock": "60000000000",
+      "execution_period": "259200000000000",
+      "proposal_threshold": "100000000000000000000"
+    }
+  },
+  "delegate": {
+    "Delegate": {
+      "council": {
+        "quorum": 2,
+        "approval_bps": 5000,
+        "voting_delay": "0",
+        "voting_period": "3600000000000",
+        "timelock": "60000000000",
+        "execution_period": "259200000000000"
+      },
+      "council_size": 3,
+      "term_length": "604800000000000",
+      "candidacy_threshold": "10000000000000000000000",
+      "candidacy_period": "1800000000000",
+      "election_period": "3600000000000",
+      "recall_quorum_bps": 1000,
+      "recall_approval_bps": 5000,
+      "recall_period": "3600000000000"
+    }
+  },
+  "sortition": {
+    "Sortition": {
+      "council": {
+        "quorum": 2,
+        "approval_bps": 5000,
+        "voting_delay": "0",
+        "voting_period": "3600000000000",
+        "timelock": "60000000000",
+        "execution_period": "259200000000000"
+      },
+      "council_size": 3,
+      "term_length": "604800000000000",
+      "eligibility_threshold": "1000000000000000000000"
+    }
+  },
+  "sowellian": {
+    "Sowellian": {
+      "approval": {
+        "quorum_bps": 2000,
+        "approval_bps": 5000,
+        "voting_delay": "0",
+        "voting_period": "3600000000000",
+        "timelock": "60000000000",
+        "execution_period": "259200000000000",
+        "proposal_threshold": "100000000000000000000"
+      },
+      "proposal_bond": "100000000000000000000",
+      "positions_window": "3600000000000",
+      "resolution_bond": "100000000000000000000",
+      "challenge_period": "3600000000000",
+      "challenge_bond": "100000000000000000000",
+      "adjudication_period": "3600000000000",
+      "adjudication_quorum_bps": 1000,
+      "adjudication_threshold_bps": 5000,
+      "max_oracle_staleness": "3600000000000"
+    }
+  },
+  "decisionMarkets": {
+    "DecisionMarkets": {
+      "trading_period": "3600000000000",
+      "threshold_bps": 100,
+      "timelock": "60000000000",
+      "execution_period": "259200000000000"
+    }
+  }
+}

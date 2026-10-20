@@ -149,4 +149,41 @@ mod tests {
             assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::Approved, "{name}");
         }
     }
+
+    /// The orbit settings the bot creates for each model
+    /// (bot/test/fixtures/models.json) decode into the orbit's own types and
+    /// pass its validation.
+    #[test]
+    fn bot_model_settings_are_valid_orbit_models() {
+        let fixtures: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../../../bot/test/fixtures/models.json")).unwrap();
+        assert_eq!(fixtures.len(), 9, "every orbit model");
+        for (name, json) in fixtures {
+            let model: orbit::Model = serde_json::from_value(json).unwrap_or_else(|e| panic!("{name}: {e}"));
+            model.validate();
+            assert_eq!(model.name(), name);
+        }
+    }
+
+    /// The policies the bot creates DAOs with (bot/test/fixtures/policies.json):
+    /// an orbit's DAO matches the documented policy, and a board's members
+    /// pass a proposal by simple majority.
+    #[test]
+    fn bot_policies_create_working_daos() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!("../../../bot/test/fixtures/policies.json")).unwrap();
+        let orbit_policy: VersionedPolicy = serde_json::from_value(fixtures["orbit"].clone()).unwrap();
+        let documented: VersionedPolicy = serde_json::from_str(POLICY).unwrap();
+        assert_eq!(orbit_policy, documented);
+
+        as_caller("sputnikv2.testnet");
+        let config: Config = serde_json::from_str(r#"{"name":"board","purpose":"test","metadata":""}"#).unwrap();
+        let mut dao = Contract::new(config, serde_json::from_value(fixtures["board"].clone()).unwrap());
+        as_caller("m1.testnet");
+        let id = dao.add_proposal(ProposalInput { description: "x".into(), kind: ProposalKind::Vote });
+        dao.act_proposal(id, Action::VoteApprove, ProposalKind::Vote, None);
+        assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::InProgress, "1 of 3 isn't a majority");
+        as_caller("m2.testnet");
+        dao.act_proposal(id, Action::VoteApprove, ProposalKind::Vote, None);
+        assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::Approved, "2 of 3 is");
+    }
 }

@@ -1,16 +1,16 @@
 [package]
-name = "token-weight-orbit"
+name = "orbit-staking"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Orbit where staked tokens vote, with delegation, through Sputnik's staking contract"
+description = "A DAO's staking contract: stake history every orbit reads by snapshot, owned by the DAO so stakes survive a model switch"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 near-sdk = "5.24"
-orbit-common = { path = "../orbit-common" }
+near-contract-standards = "5.24"
 
 [dev-dependencies]
 near-sdk = { version = "5.24", features = ["unit-testing"] }

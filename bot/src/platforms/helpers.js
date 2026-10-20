@@ -1,4 +1,5 @@
 import { NEAR_DECIMALS, toUnits, fromUnits } from "../near/amounts.js";
+import { ChainError } from "../near/client.js";
 import { services } from "./services.js";
 
 /**
@@ -15,10 +16,16 @@ export function reply(text, extra = {}) {
   return { text, ...extra };
 }
 
-/** This chat's DAO link, or a UserError explaining how to link one. */
-export function requireDao(ctx) {
+/**
+ * This chat's DAO link, or a UserError explaining how to get one. With
+ * `models`, also requires the DAO to run one of them.
+ */
+export function requireDao(ctx, models) {
   const link = services.db.getChatDao(ctx.platform, ctx.chatId);
-  if (!link) throw new UserError(`This chat isn't linked to a DAO yet. An admin can run \`${ctx.cmd("link")} <dao> <orbit>\`.`);
+  if (!link) throw new UserError(`This chat has no DAO yet. An admin can create one with \`${ctx.cmd("createdao")} <name> <SYMBOL> <supply> [model]\` or link one with \`${ctx.cmd("link")}\`.`);
+  if (models && !models.includes(link.model)) {
+    throw new UserError(`That's for ${models.join(" or ")} DAOs; this chat's DAO is *${link.model}*. See \`${ctx.cmd("help")}\`.`);
+  }
   return link;
 }
 
@@ -41,20 +48,28 @@ export function parseAmount(raw, decimals, usage) {
   return units;
 }
 
-/** A NEAR account ID, or a UserError. */
-export function parseAccountId(raw, usage) {
+const ACCOUNT_ID = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
+
+/** A NEAR account ID, or a UserError. "me" is the caller's own account. */
+export async function parseAccountId(ctx, raw, usage) {
+  if (String(raw).toLowerCase() === "me") return (await userAccount(ctx)).accountId;
   const id = String(raw ?? "").toLowerCase();
-  const valid = id.length >= 2 && id.length <= 64 && /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/.test(id);
-  if (!valid) throw new UserError(`\`${raw ?? ""}\` isn't a NEAR account. Usage: \`${usage}\``);
+  if (id.length < 2 || id.length > 64 || !ACCOUNT_ID.test(id)) throw new UserError(`\`${raw ?? ""}\` isn't a NEAR account. Usage: \`${usage}\``);
   return id;
+}
+
+export function choiceOf(raw, usage) {
+  const choice = { for: "For", yes: "For", against: "Against", no: "Against", abstain: "Abstain" }[String(raw).toLowerCase()];
+  if (!choice) throw new UserError(`Usage: \`${usage}\``);
+  return choice;
 }
 
 export const formatNear = (yocto) => fromUnits(yocto, NEAR_DECIMALS);
 
 /** The chat's token: id, symbol and decimals. */
 export async function tokenInfo(link) {
-  const meta = await services.tokenWeight.tokenMetadata(link.tokenId);
-  return { id: link.tokenId, symbol: meta.symbol, decimals: meta.decimals };
+  const meta = await services.staking.tokenMetadata(link.tokenId);
+  return { id: link.tokenId, symbol: meta.symbol, decimals: meta.decimals, format: (units) => `${fromUnits(units, meta.decimals)} ${meta.symbol}` };
 }
 
 /** Nanoseconds as "2 days", "5 hours", "30 minutes". */
@@ -62,10 +77,22 @@ export function formatDuration(ns) {
   const minutes = Number(BigInt(ns) / 60_000_000_000n);
   if (minutes >= 2 * 24 * 60) return `${Math.round(minutes / (24 * 60))} days`;
   if (minutes >= 2 * 60) return `${Math.round(minutes / 60)} hours`;
-  return `${minutes} minutes`;
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 /** Nanoseconds since the epoch as a UTC time. */
 export function formatTime(ns) {
   return `${new Date(Number(BigInt(ns) / 1_000_000n)).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+export const nowNs = () => BigInt(Date.now()) * 1_000_000n;
+
+/** Runs `fn`; a contract error with code `code` becomes a UserError with `message`. */
+export async function explain(fn, messages) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ChainError && messages[err.code]) throw new UserError(messages[err.code]);
+    throw err;
+  }
 }

@@ -53,13 +53,13 @@ can reject, and a swap hands control to the new orbit and removes the old one.
 
 1. A user proposes in the orbit (`propose`). The orbit stores the Sputnik
    proposal kind (for example a `Transfer`) as JSON.
-2. Users vote in the orbit under its rules (`vote`).
-3. The vote that passes it sends it to the core when enough gas is attached;
-   otherwise anyone calls `execute`. The orbit calls the core's
-   `add_proposal` and, in the callback with the new id,
-   `act_proposal(id, "VoteApprove", kind)`. With the 1-of-1 threshold,
-   Sputnik executes at once.
-4. A rejected or expired vote never reaches the core.
+2. Members decide in the orbit under its model (`vote`, `support`, a
+   challenge...).
+3. Once it has passed and its timelock is over, anyone calls `execute`
+   within the execution window. The orbit calls the core's `add_proposal`
+   and, in the callback with the new id, `act_proposal(id, "VoteApprove",
+   kind)`. With the 1-of-1 threshold, Sputnik executes at once.
+4. A defeated, cancelled or expired proposal never reaches the core.
 
 Only one send runs at a time, so the core can't receive the same proposal
 twice. A send that fails part-way can be retried with `execute`: if the
@@ -84,24 +84,32 @@ orbit, that replaces the `governance` group `{old}` with `{new}`.
   multisig) with only `policy_add_or_update_role:*` permissions, to recover
   from a broken orbit. Chosen per DAO at creation.
 
-## Orbit interface
+## The orbit contract
 
-Every orbit implements:
+One contract (`orbits/orbit`) runs every model, nine in all; a DAO's orbit is created with
+one model and keeps it. Switching models means a swap to a new orbit. All
+models share the code that matters most: sending a passed proposal to the
+core exactly once, the swap check, and the proposal rules below.
 
-| Method | Kind | Notes |
-| --- | --- | --- |
-| `new(dao_id, …)` | init | Binds the orbit to one core, for good |
-| `propose(description, kind)` | change | `kind` is a Sputnik `ProposalKind` as JSON. Refused if it would lock the core (below) |
-| `vote(id, choice)` | change | Rules are the orbit's own |
-| `execute(id)` | change | Sends a passed proposal to the core and approves it there |
-| `finalize(id)` | change | Marks a proposal whose voting period is over as expired |
-| `get_dao()` | view | Used by the swap check |
-| `get_config()` | view | |
-| `get_proposal(id)`, `get_proposals(from, limit)`, `get_proposal_count()` | view | Status, tallies, and the core's proposal id once sent |
+| Method | Notes |
+| --- | --- |
+| `new(dao_id, staking_id, token_id, model, council)` | Binds the orbit to one core for good |
+| `propose(description, kind)` | `kind` is a Sputnik `ProposalKind` as JSON. Council models: council members only. Otherwise a proposal threshold, if set, is checked against the proposer's stake |
+| `vote(id, choice)` | For / Against / Abstain. Stake models read the voter's stake at the proposal's snapshot; councils count one vote per seat |
+| `execute(id)` | Once passed (or queued) and past its timelock, within its execution window: sends it to the core and approves it there |
+| `cancel(id)` | The proposer, before execution |
+| `get_dao()`, `get_model()`, `get_proposal(id)`, `get_proposals(from, limit)` | Views; `get_dao` is what the swap check reads |
 
-Statuses: `InProgress`, `Passed` (not yet on the core), `Executed` (approved
-on the core; the core's own proposal status shows the execution result),
-`Rejected`, `Expired`.
+Model-specific methods: `delegate`, `undelegate`, `resolve_delegated_vote`
+(liquid); `ft_on_transfer` with `{"challenge": id}` and `resolve_challenge`
+(optimistic); `support`, `withdraw_support`, `queue` (conviction);
+`start_election`, `declare_candidacy`, `vote_in_election`,
+`finalize_election`, `initiate_recall`, `vote_recall`, `finalize_recall`
+(delegate); `register_eligible`, `withdraw_eligibility`, `draw` (sortition).
+
+States: `Pending`, `Active`, `ChallengeWindow` (optimistic), `Succeeded`,
+`Defeated`, `Queued` (conviction), `Executed` (approved on the core),
+`Expired`, `Cancelled`.
 
 ### Proposals an orbit refuses
 
@@ -113,39 +121,52 @@ changes the role's permissions or names more than one orbit; and policy
 parameters that set a proposal bond or a proposal period under an hour.
 Other roles (for example a guardian) may change freely.
 
-## Orbits planned
+## Models
 
-| Orbit | Rules | Source |
-| --- | --- | --- |
-| Native council | No orbit: humans are the core's members directly. The free default, and Sputnik's own multisig | Sputnik as-is |
-| Token weight | Staked tokens, with delegation | Logic from Sputnik's `policy.rs`, `proposals.rs`, `delegation.rs` |
-| Quadratic, optimistic, conviction, … | Ported from Spaces / Vortexes | Protean |
+The rules follow Protean's EVM contracts (Spaces). Times are nanoseconds,
+shares basis points.
 
-The Social Money track asks teams not to rebuild the multisig, so there is no
-board orbit: a board DAO is a native-council core.
+| Model | Rules |
+| --- | --- |
+| Board | No orbit: the members are the core's governance role and pass proposals by simple majority. Sputnik's own multisig |
+| Token-weighted | Turnout (for + against + abstain) must reach `quorum_bps` of total stake at the snapshot, and for / (for + against) must reach `approval_bps` |
+| Quadratic | As token-weighted, with each vote weighing the square root of stake and quorum measured against the square root of total stake |
+| Liquid | As token-weighted; anyone may delegate. `resolve_delegated_vote` follows a delegator's chain (up to 5 hops) to the first account that voted and adds the delegator's stake to that choice |
+| Optimistic | Passes when its challenge window ends unchallenged. A challenge sends `challenge_bond` of the token to the orbit and starts a token-weighted vote; the bond goes to the treasury if the proposal passes anyway, back to the challenger if it fails |
+| Conviction | A member backs one proposal with all their unlocked stake, which the staking contract locks. Conviction moves linearly toward current support at `growth_per_second`; a proposal may queue once it reaches its requirement: `min_conviction`, plus a multiplier for NEAR or token payouts, or `governance_conviction` for anything else |
+| Delegate | Stakers elect a council (plurality, top `council_size` win) for a term, and can recall a member by a stake-weighted vote. The council proposes and votes one seat, one vote |
+| Sortition | As delegate, but the council is drawn at random from stakers who opted in. NEAR's block random seed replaces Spaces' Pyth Entropy: no oracle or fee, but the block producer could bias a draw |
+| Sowellian | Approval is a stake-weighted vote on the proposal and its success criteria (an oracle value against a target, or a human resolver), gated by a proposal bond. Once approved, YES/NO positions in the token are taken for `positions_window`; then it executes, and after its measurement period the outcome is resolved: by the oracle, or by a bonded resolver whose answer may be disputed with a bond and adjudicated by stake at the end of approval. Winners share the whole pool; bonds follow who was right. If it never executes, positions are refunded |
+| Decision markets | Each proposal gets a pass market and a fail market (constant-product, Uniswap V2 pricing with a 0.3% fee) trading the DAO's token against NEAR, seeded by the proposer. Units are internal balances: splitting gives equal pass and fail units. After `trading_period`, it passed if the pass market's time-weighted price beats the fail market's by `threshold_bps`; only winning units redeem, one for one |
 
-## Token weight
+Sowellian's oracle is any contract with `latest_value({"selector"})`
+returning `[value, updated_at]`, the NEAR form of Spaces' IMetricOracle; no
+adapter to a NEAR price feed is included yet. Tokens reach the orbit with
+`ft_transfer_call` and a message saying what they're for (a bond, a
+position, a seed), since NEAR has no `transferFrom`.
 
-NEAR has no synchronous reads between contracts, so the orbit can't check a
-balance at vote time. As in Sputnik:
+## Staking
 
-- Users stake through a `sputnik-staking` instance whose **owner is the
-  orbit**. The staking contract pushes `register_delegation`, `delegate` and
-  `undelegate` to its owner.
-- The unstake cooldown must be longer than the voting period, so a stake
-  can't vote twice.
-- `sputnik-staking` is used unmodified: the orbit implements the same three
-  hooks a Sputnik DAO does. Its owner is fixed at creation, so swapping away
-  from token weight and back means a new staking contract, and members
-  restake.
-- Like Sputnik, the threshold is a share of all staked weight at the time of
-  each vote, never less than 1, and a vote counts the voter's weight at the
-  time they vote.
+Each DAO has one staking contract (`orbits/orbit-staking`), owned by its core,
+not by an orbit:
+
+- Members stake the token with `ft_transfer_call` and take it back with
+  `unstake` at any time. Each change is a checkpoint; `weights_at(account,
+  t)` returns stake and total stake strictly before `t`, so weight fixed at a
+  proposal's snapshot can't be moved and used again.
+- Because the staking contract belongs to the core, a new orbit reads the
+  same stakes: switching models keeps every member's stake.
+- The orbit governing the core can become the *locker* (`claim_locker`,
+  checked against the core's policy). Conviction locks stake while it backs a
+  proposal. Locks are kept per locker, so a replaced orbit can still release
+  what it locked.
+- Members pay for their own checkpoints from a NEAR balance deposited with
+  `storage_deposit`.
 
 ## Global contracts and cost
 
-Every implementation is published once as a NEAR global contract, by code
-hash (`bot/scripts/publish-contracts.js`, hashes in
+The orbit, staking and token contracts are each published once as a NEAR
+global contract, by code hash (`bot/scripts/publish-contracts.js`, hashes in
 `orbits/deployments/<network>.json`). Each DAO's orbit, token and staking
 accounts use that code by hash and store none of their own, as the official
 Sputnik factory (3.2 and later) does for the core. Code referenced by hash
@@ -154,9 +175,10 @@ by swapping orbits.
 
 | | Cost |
 | --- | --- |
-| Publish the orbit, token and staking contract (once per network) | ~51 NEAR: 514 kB at 10× normal storage |
-| Each token-weight DAO (`bot/scripts/deploy-dao.js`) | ~0.4 NEAR: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for three accounts, and registrations |
-| Each member who stakes | ~0.01 NEAR staking registration, paid from their account |
+| Publish the orbit, staking and token contracts (once per network) | ~78 NEAR: 777 kB at 10× normal storage |
+| Each DAO (`/createdao`) | ~0.5 NEAR: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for its accounts, and registrations |
+| A model switch | ~0.25 NEAR for the new orbit |
+| Each member who stakes | ~0.01 NEAR staking storage, paid from their account |
 
 Check the live factory's version with `get_contracts_metadata` (3.2 or later
 uses global contracts); see `docs/testnet-check.md`.

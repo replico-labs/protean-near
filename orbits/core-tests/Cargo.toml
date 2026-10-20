@@ -10,3 +10,4 @@ sputnikdao2 = { git = "https://github.com/near-daos/sputnik-dao-contract", rev =
 near-sdk = { version = "5.24", features = ["unit-testing", "global-contracts"] }
 serde_json = "1"
 orbit-common = { path = "../orbit-common" }
+orbit = { path = "../orbit" }

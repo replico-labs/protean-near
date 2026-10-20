@@ -6,16 +6,31 @@
  * account. Rows are { label, cmd } (runs a command) or { label, url }.
  */
 
-/** What a member can do with a proposal in orbit status `status`. */
-export function proposalButtons(id, status = "InProgress") {
+const voteRow = (id) => [
+  { label: "✅ For", cmd: `vote ${id} for` },
+  { label: "❌ Against", cmd: `vote ${id} against` },
+  { label: "➖ Abstain", cmd: `vote ${id} abstain` },
+];
+
+/**
+ * What a member can do with proposal `id` of a `model` DAO in `state`: an
+ * orbit state (Active, ChallengeWindow, Succeeded, Queued...) or, for a
+ * board, the core's status (InProgress...).
+ */
+export function proposalButtons(model, id, state) {
   const rows = [];
-  if (status === "InProgress") {
-    rows.push([
-      { label: "✅ For", cmd: `vote ${id} for` },
-      { label: "❌ Against", cmd: `vote ${id} against` },
-    ]);
+  if (model === "board") {
+    if (state === "InProgress") rows.push([{ label: "✅ Approve", cmd: `vote ${id} for` }, { label: "❌ Reject", cmd: `vote ${id} against` }]);
+  } else if (model === "conviction") {
+    if (state === "Active") rows.push([{ label: "💪 Support", cmd: `support ${id}` }, { label: "⏳ Queue", cmd: `queue ${id}` }]);
+  } else if (model === "decisionMarkets") {
+    // Trading takes amounts: typed commands only.
+  } else if (state === "ChallengeWindow") {
+    rows.push([{ label: "⚔️ Challenge", cmd: `challenge ${id}` }]);
+  } else if (state === "Active") {
+    rows.push(voteRow(id));
   }
-  if (status === "Passed") rows.push([{ label: "▶️ Execute", cmd: `execute ${id}` }]);
+  if (state === "Succeeded" || state === "Queued") rows.push([{ label: "▶️ Execute", cmd: `execute ${id}` }]);
   rows.push([{ label: "🔄 Status", cmd: `proposal ${id}` }]);
   return rows;
 }
@@ -40,7 +55,7 @@ export function decodeButton(data) {
 }
 
 /** Only these commands can come from a button: a forged payload can't run anything else. */
-export const BUTTON_COMMANDS = new Set(["vote", "execute", "proposal", "help"]);
+export const BUTTON_COMMANDS = new Set(["vote", "execute", "proposal", "support", "queue", "challenge", "help"]);
 
 /** Telegram's inline keyboard for `rows`. */
 export function telegramKeyboard(rows = []) {

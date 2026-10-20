@@ -15,7 +15,7 @@ import { actions, baseEncode, yoctoToNear } from "near-api-js";
 import { NETWORK_ID, OPERATOR_ACCOUNT_ID } from "../src/config.js";
 import { operatorAccount, provider } from "../src/near/client.js";
 
-export const CONTRACTS = ["token_weight_orbit", "governance_token", "sputnik_staking"];
+export const CONTRACTS = ["orbit", "orbit_staking", "governance_token"];
 const WASM_DIR = new URL("../../orbits/target/near/", import.meta.url);
 const DEPLOYMENTS_DIR = new URL("../../orbits/deployments/", import.meta.url);
 // Publishing a global contract costs 10x normal storage (1 NEAR per 100 kB).

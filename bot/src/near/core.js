@@ -1,16 +1,19 @@
-import { provider, view } from "./client.js";
+import { provider, view, call } from "./client.js";
 
 /**
- * Reads from a chat's core: an unmodified Sputnik DAO. The bot never writes
- * to it directly; only the orbit can.
+ * A chat's core: an unmodified Sputnik DAO. With an orbit, only the orbit
+ * writes to it. A board DAO has no orbit: its members propose and vote on
+ * the core directly.
  */
 
 export const getPolicy = (daoId) => view(daoId, "get_policy");
 export const getConfig = (daoId) => view(daoId, "get_config");
 export const getCoreProposal = (daoId, id) => view(daoId, "get_proposal", { id: Number(id) });
+export const getCoreProposals = (daoId, fromIndex, limit) => view(daoId, "get_proposals", { from_index: fromIndex, limit });
+export const getLastProposalId = (daoId) => view(daoId, "get_last_proposal_id");
 
-/** The orbit(s) that govern the core: members of its "governance" role. */
-export async function governingOrbits(daoId) {
+/** Members of the core's "governance" role: the orbit, or a board's members. */
+export async function governingMembers(daoId) {
   const policy = await getPolicy(daoId);
   const role = policy.roles.find((r) => r.name === "governance");
   return role?.kind?.Group ?? [];
@@ -20,4 +23,18 @@ export async function governingOrbits(daoId) {
 export async function treasuryNear(daoId) {
   const account = await provider.viewAccount({ accountId: daoId });
   return BigInt(account.amount);
+}
+
+// --- Board: members act on the core directly ---
+
+/** Adds a proposal to the core, with the policy's bond. Returns its id. */
+export async function addProposal(account, daoId, description, kind) {
+  const { proposal_bond: bond } = await getPolicy(daoId);
+  return call(account, daoId, "add_proposal", { proposal: { description, kind } }, { deposit: BigInt(bond) });
+}
+
+/** Votes "VoteApprove" or "VoteReject" on core proposal `id`. */
+export async function actProposal(account, daoId, id, action) {
+  const proposal = await getCoreProposal(daoId, id);
+  return call(account, daoId, "act_proposal", { id: Number(id), action, proposal: proposal.kind });
 }

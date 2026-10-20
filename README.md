@@ -9,39 +9,54 @@ interchangeable governance modules for Sputnik DAO, for building and evolving
 onchain organizations. Communities can swap their governance model by
 proposal without moving their treasury.
 
-> Status: the token-weight orbit, the bot and the deploy script are built and
-> tested locally (below). They haven't run against testnet yet.
+> Status: contracts and bot are built and tested locally (below). They
+> haven't run against testnet yet.
 
 ## How it works
 
 - **Core:** an unmodified Sputnik DAO, created through the official factory.
   It holds the treasury and executes proposals.
-- **Orbit:** a governance module. It's the core's only member: people propose
-  and vote in the orbit, and when a vote passes, the orbit's single vote
-  executes it on the core.
-- **Swap:** one proposal hands the core to a different orbit. The treasury
-  never moves.
+- **Orbit:** the governance module. It's the core's only member: people
+  propose and decide in the orbit under its model, and when a proposal passes
+  the orbit's single vote executes it on the core.
+- **Staking:** one staking contract per DAO, owned by the core. Every orbit
+  reads stake from it by snapshot, so members keep their stake when the DAO
+  switches models.
+- **Switch:** one proposal hands the core to a new orbit running another
+  model. The treasury and stakes never move.
 
-The first orbit is **token weight**: members stake the DAO's token through
-Sputnik's own staking contract, and their stake is their vote. Because the
-core is plain Sputnik, a Protean DAO also works in Sputnik tools such as
-Trezu. Full design: [docs/SPEC.md](docs/SPEC.md).
+| Model | How it decides |
+| --- | --- |
+| `board` | Named members approve directly on the DAO by majority (Sputnik's own multisig, no orbit) |
+| `tokenWeighted` | One staked token, one vote; quorum and approval thresholds, timelock |
+| `quadratic` | Voting weight is the square root of stake |
+| `liquid` | Vote directly, or delegate; delegated weight follows the chain to whoever voted |
+| `optimistic` | Passes after a challenge window unless someone posts a bond, which starts a vote |
+| `conviction` | Back one proposal at a time with locked stake; conviction builds over time |
+| `delegate` | Stakers elect a council for a term and can recall members |
+| `sortition` | A council drawn at random from stakers who opt in |
+| `sowellian` | Approve a proposal with its success criteria, bet YES/NO on the outcome, resolve it after measuring (oracle, or a bonded resolver open to dispute) |
+| `decisionMarkets` | Each proposal gets pass and fail markets; the one pricing the token higher over the window decides |
+
+The rules follow Protean's EVM contracts
+([Spaces](https://github.com/replico-labs/Spaces)). Because the core is plain
+Sputnik, a Protean DAO also works in Sputnik tools such as Trezu. Design:
+[docs/SPEC.md](docs/SPEC.md).
 
 ## Repository layout
 
 ```
 orbits/                    Rust contracts (Cargo workspace)
-  orbit-common/            rules every orbit shares: which proposals may reach the core
-  token-weight-orbit/      the token-weight orbit
-  governance-token/        fixed-supply NEP-141 token for a DAO
-  sputnik-staking/         Sputnik's staking contract, copied unmodified
-  core-tests/              checks the design against the real Sputnik contract
+  orbit/                   the orbit: one contract, nine models
+  orbit-staking/           a DAO's staking contract: stake history, locks
+  orbit-common/            which proposals may reach the core; the calls to it
+  governance-token/        fixed-supply NEP-141 token
+  core-tests/              checks against the real Sputnik contract
+  deployments/             published code hashes, per network
 bot/                       Telegram and Discord bot (Node)
-  src/platforms/           commands, shared by both chat platforms
-  src/near/                NEAR calls: accounts, orbit, staking, treasury
-  scripts/publish-contracts.js  publishes the contracts once, as global contracts
-  scripts/deploy-dao.js    creates a complete DAO that uses them
-orbits/deployments/        published code hashes, per network
+  src/platforms/commands/  the commands, shared by both platforms
+  src/near/                NEAR: accounts, orbit, staking, Sputnik, deployment
+  scripts/                 publish the contracts; create a DAO from the shell
 docs/                      SPEC.md (design), testnet-check.md
 supabase/schema.sql        the bot's database
 ```
@@ -51,84 +66,87 @@ supabase/schema.sql        the bot's database
 ### 1. Contract tests (Rust 1.85+)
 
 ```bash
-cd orbits
-cargo test
+cd orbits && cargo test
 ```
 
-Expect every suite to pass (45 tests). They show that:
+Expect every suite to pass (68 tests). They show, among others, that:
 
 - a Sputnik DAO whose only member is an orbit executes what the orbit passes,
-  and refuses everyone else;
-- a swap hands the DAO to the new orbit in one proposal;
-- the orbit refuses proposals that would lock the DAO;
-- token-weight voting passes, rejects and expires proposals correctly, and a
-  passed proposal reaches the DAO exactly once;
-- every proposal the bot makes decodes and executes on Sputnik
-  (`bot/test/fixtures/kinds.json`).
+  refuses everyone else, and moves to a new orbit in one proposal;
+- each model decides like its Spaces counterpart: quorum and approval,
+  square-root weights, delegation chains, challenge bonds, conviction,
+  elections and recalls, random draws, outcome bets with disputes and
+  adjudication, and pass/fail markets decided by time-weighted price;
+- a passed proposal reaches the DAO exactly once, and only after its
+  timelock;
+- stake is read by snapshot, and locks block unstaking;
+- every proposal, model setting and DAO policy the bot creates works on the
+  contracts (`bot/test/fixtures`).
 
 ### 2. Bot tests (Node 20+)
 
 ```bash
-cd bot
-npm install
-npm test
+cd bot && npm install && npm test
 ```
 
-Expect `pass 20`. The commands run against a fake chain.
+Expect `pass 28`. The commands run against a fake chain.
 
 ### 3. Run it on testnet
 
-You need a funded testnet account for the operator, a Telegram or Discord bot
-token, a Supabase project and an AWS KMS key. Publishing the contracts costs
-about 51 NEAR, once; each DAO after that costs about 0.4 NEAR.
+You need a funded testnet operator account, a Telegram or Discord bot token,
+a Supabase project (run `supabase/schema.sql`) and an AWS KMS key.
+Publishing the contracts costs about 78 NEAR, once; each DAO after that
+costs well under 1 NEAR.
 
 ```bash
 # Build the contracts (needs cargo-near)
 cd orbits
-for c in token-weight-orbit governance-token sputnik-staking; do (cd $c && cargo near build non-reproducible-wasm); done
+for c in orbit orbit-staking governance-token; do (cd $c && cargo near build non-reproducible-wasm); done
 
-# Configure: fill in .env (see .env.example), and run supabase/schema.sql in Supabase
+# Configure, then publish the contracts once as global contracts
 cd ../bot
-cp ../.env.example .env
+cp ../.env.example .env        # fill it in
+node scripts/publish-contracts.js        # shows the cost
+node scripts/publish-contracts.js --yes  # publishes
 
-# Publish the three contracts once, as global contracts (shows the cost; --yes to pay it)
-node scripts/publish-contracts.js
-node scripts/publish-contracts.js --yes
-
-# Create a DAO: Sputnik core, ARK token, staking contract and orbit, all using the shared code
-node scripts/deploy-dao.js ark ARK 1000000
-```
-
-Expect it to print `/link ark.sputnikv2.testnet tw.ark.<operator>`. Then:
-
-```bash
 npm run telegram     # or: npm run discord
 ```
 
-In a Telegram group with the bot:
+In a Telegram group with the bot (as a group admin):
 
 | Do | See |
 | --- | --- |
-| `/link ark.sputnikv2.testnet tw.ark.<operator>` (as a group admin) | ✅ Linked, with the voting token |
-| `/wallet` | Your new NEAR account, e.g. `tg123456.<operator>` |
-| Send ARK to that account from the token owner, then `/stake 100` | ✅ Staked; voting weight 100 |
-| `/pay 1 NEAR <your account> test payout` | 📝 New proposal #0 with For / Against buttons |
-| Press **For** (with more than half of all staked ARK) | It passed and is being executed |
-| `/proposal 0` | Status `Executed`; on the DAO: proposal 0, `Approved` |
+| `/createdao ark ARK 1000000` | 🏛 ark is live, with tokenWeighted governance; you hold 1,000,000 ARK |
+| `/send 1000 ARK <a member's account>` (they get theirs from `/wallet`) | ✅ Sent |
+| Each member: `/stake 1000` | ✅ Staked |
+| `/pay 1 NEAR me test payout` | 📝 New proposal #0, with For / Against / Abstain buttons |
+| Members press **For** | 🗳 Voted for |
+| After voting ends: **Execute** | ▶️ #0 was executed on the DAO |
 | `/treasury` | The DAO's NEAR balance, 1 NEAR lower |
+| `/switchmodel quadratic`, vote, execute | 🔀 The DAO now runs quadratic governance. Same treasury, same stakes |
+
+Voting periods default to an hour so a lifecycle fits in a demo; see
+`.env.example` to lengthen them.
 
 ## Commands
 
-| Command | What it does |
+| | |
 | --- | --- |
-| `/link <dao> <orbit>` · `/unlink` | Link this chat to a DAO (admins) |
-| `/wallet` | Your account, balances and voting weight |
-| `/stake <amount>` · `/unstake <amount>` · `/withdraw <amount>` | Manage your voting weight |
-| `/dao` · `/treasury` · `/proposals` · `/proposal <id>` | The DAO and its proposals |
-| `/pay <amount> <NEAR\|token> <account> <description>` | Propose a payment from the treasury |
-| `/signal <text>` | Propose a decision with nothing to execute |
-| `/swap <orbit> <description>` | Propose handing the DAO to another orbit |
-| `/vote <id> for\|against` · `/execute <id>` · `/finalize <id>` | Decide |
+| Setup | `/createdao <name> <SYMBOL> <supply> [model] [members...]` · `/link <dao> [orbit]` · `/unlink` · `/switchmodel <model> [members...]` |
+| Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` |
+| The DAO | `/dao` · `/treasury` · `/proposals` · `/proposal <id>` · `/council` |
+| Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
+| Deciding | `/vote <id> for\|against\|abstain` · `/execute <id>` · `/cancel <id>` |
+| Optimistic | `/challenge <id>` · `/resolvechallenge <id>` |
+| Liquid | `/delegate <account>` · `/undelegate` · `/resolve <id> [delegator]` |
+| Conviction | `/support <id>` · `/withdrawsupport` · `/queue <id>` |
+| Delegate | `/startelection` · `/declarecandidacy` · `/voteinelection <candidates...>` · `/finalizeelection` · `/recall <member>` · `/voterecall <id> <choice>` · `/finalizerecall <id>` |
+| Sortition | `/registereligible` · `/withdraweligibility` · `/draw` |
+| Sowellian | `/position <id> yes\|no <amount>` · `/proposeresolution <id> success\|failure` · `/dispute <id>` · `/adjudicate <id> <outcome>` · `/finalizeresolution <id>` · `/claimposition <id>` · `/forfeitbond <id>` |
+| Decision markets | `/seed <id> <tokens> <NEAR>` · `/split <id> <amount> <NEAR\|token>` · `/trade <id> pass\|fail <amount> <NEAR\|token>` · `/merge` · `/redeem <id>` · `/reclaimliquidity <id>` |
+
+`/help` shows only the commands for the chat's model. Accounts can be
+written as `me`.
 
 ## Accounts and keys
 
@@ -141,12 +159,11 @@ access key and use shared code by hash, so their code can't be changed.
 
 ## Built with
 
-- [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract) (MIT):
-  the core, unmodified; its staking contract, copied unmodified; and the
-  token-weight voting rules, adapted into the orbit.
-- NEAR global contracts: the orbit, token and staking contract are published
-  once by code hash, and every DAO uses them without storing its own copy.
+- [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract) (MIT),
+  unmodified, as every DAO's core.
+- NEAR global contracts: the orbit, staking and token contracts are published
+  once by code hash, and every DAO uses them without its own copy.
 - NEAR named accounts and sub-accounts (`tg123456.orbits.testnet`,
   `tw.ark.orbits.testnet`).
-- Protean's EVM bot ([Spaces](https://github.com/replico-labs/Spaces) on EVM,
-  Vortexes on Solana) as the base for the bot's chat layer.
+- Protean's EVM contracts and bot ([Spaces](https://github.com/replico-labs/Spaces))
+  as the model rules and the chat layer's base.
