@@ -84,12 +84,18 @@ orbit, that replaces the `governance` group `{old}` with `{new}`.
   multisig) with only `policy_add_or_update_role:*` permissions, to recover
   from a broken orbit. Chosen per DAO at creation.
 
-## The orbit contract
+## The orbit modules
 
-One contract (`orbits/orbit`) runs every model, nine in all; a DAO's orbit is created with
-one model and keeps it. Switching models means a swap to a new orbit. All
-models share the code that matters most: sending a passed proposal to the
-core exactly once, the swap check, and the proposal rules below.
+Each model is its own contract, an Orbits module (`orbits/modules/<model>`),
+nine in all. A DAO's orbit is an instance of one module; switching models
+means a swap to an orbit of another module.
+
+The modules are built from one engine crate (`orbits/orbit`), where each
+model is a Cargo feature and each module enables exactly one. A module's
+contract therefore carries only its own model's methods, while the code
+that matters most is written and tested once: sending a passed proposal to
+the core exactly once, the swap check, and the proposal rules below. A
+module refuses to be initialised with another model's settings.
 
 | Method | Notes |
 | --- | --- |
@@ -165,7 +171,7 @@ not by an orbit:
 
 ## Global contracts and cost
 
-The orbit, staking and token contracts are each published once as a NEAR
+The nine modules and the staking and token contracts are each published once as a NEAR
 global contract, by code hash (`bot/scripts/publish-contracts.js`, hashes in
 `orbits/deployments/<network>.json`). Each DAO's orbit, token and staking
 accounts use that code by hash and store none of their own, as the official
@@ -175,7 +181,8 @@ by swapping orbits.
 
 | | Cost |
 | --- | --- |
-| Publish the orbit, staking and token contracts (once per network) | ~78 NEAR: 777 kB at 10× normal storage |
+| Publish all nine modules, staking and token (once per network) | ~255 NEAR: 2.55 MB at 10× normal storage |
+| ...or staking, token and one module | ~57 NEAR; each further module ~23-28 NEAR |
 | Each DAO (`/createdao`) | ~0.5 NEAR: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for its accounts, and registrations |
 | A model switch | ~0.25 NEAR for the new orbit |
 | Each member who stakes | ~0.01 NEAR staking storage, paid from their account |

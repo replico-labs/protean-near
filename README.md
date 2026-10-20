@@ -9,14 +9,14 @@ interchangeable governance modules for Sputnik DAO, for building and evolving
 onchain organizations. Communities can swap their governance model by
 proposal without moving their treasury.
 
-> Status: contracts and bot are built and tested locally (below). They
-> haven't run against testnet yet.
+> Status: contracts and bot are tested locally and run end to end on a
+> local NEAR node (docs/sandbox.md). They haven't run on testnet yet.
 
 ## How it works
 
 - **Core:** an unmodified Sputnik DAO, created through the official factory.
   It holds the treasury and executes proposals.
-- **Orbit:** the governance module. It's the core's only member: people
+- **Orbit:** the governance module, one contract per model. It's the core's only member: people
   propose and decide in the orbit under its model, and when a proposal passes
   the orbit's single vote executes it on the core.
 - **Staking:** one staking contract per DAO, owned by the core. Every orbit
@@ -47,7 +47,8 @@ Sputnik, a Protean DAO also works in Sputnik tools such as Trezu. Design:
 
 ```
 orbits/                    Rust contracts (Cargo workspace)
-  orbit/                   the orbit: one contract, nine models
+  modules/                 the nine governance modules, one contract each
+  orbit/                   the engine the modules are built from (a feature per model)
   orbit-staking/           a DAO's staking contract: stake history, locks
   orbit-common/            which proposals may reach the core; the calls to it
   governance-token/        fixed-supply NEP-141 token
@@ -57,7 +58,7 @@ bot/                       Telegram and Discord bot (Node)
   src/platforms/commands/  the commands, shared by both platforms
   src/near/                NEAR: accounts, orbit, staking, Sputnik, deployment
   scripts/                 publish the contracts; create a DAO from the shell
-docs/                      SPEC.md (design), testnet-check.md
+docs/                      SPEC.md (design), sandbox.md (local node), testnet-check.md
 supabase/schema.sql        the bot's database
 ```
 
@@ -89,25 +90,34 @@ Expect every suite to pass (68 tests). They show, among others, that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 28`. The commands run against a fake chain.
+Expect `pass 29`. The commands run against a fake chain.
 
-### 3. Run it on testnet
+### 3. Run it on a local NEAR node
+
+A sandbox node runs the whole flow against real contracts, for free:
+create a DAO, stake, vote, execute, switch models, conviction locks, every
+module, and a board DAO. See [docs/sandbox.md](docs/sandbox.md).
+
+### 4. Run it on testnet
 
 You need a funded testnet operator account, a Telegram or Discord bot token,
 a Supabase project (run `supabase/schema.sql`) and an AWS KMS key.
-Publishing the contracts costs about 78 NEAR, once; each DAO after that
-costs well under 1 NEAR.
+Publishing all eleven contracts costs about 255 NEAR, once per network
+(global contracts cost 10× normal storage). You can start with staking,
+the token and the modules you need, about 23-28 NEAR each, and add the
+rest later. Each DAO after that costs well under 1 NEAR.
 
 ```bash
 # Build the contracts (needs cargo-near)
 cd orbits
-for c in orbit orbit-staking governance-token; do (cd $c && cargo near build non-reproducible-wasm); done
+for c in modules/* orbit-staking governance-token; do (cd $c && cargo near build non-reproducible-wasm); done
 
 # Configure, then publish the contracts once as global contracts
 cd ../bot
 cp ../.env.example .env        # fill it in
 node scripts/publish-contracts.js        # shows the cost
-node scripts/publish-contracts.js --yes  # publishes
+node scripts/publish-contracts.js --yes  # publishes all
+node scripts/publish-contracts.js tokenWeighted quadratic --yes  # or only some models
 
 npm run telegram     # or: npm run discord
 ```
@@ -161,8 +171,9 @@ access key and use shared code by hash, so their code can't be changed.
 
 - [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract) (MIT),
   unmodified, as every DAO's core.
-- NEAR global contracts: the orbit, staking and token contracts are published
-  once by code hash, and every DAO uses them without its own copy.
+- NEAR global contracts: the nine modules and the staking and token
+  contracts are published once by code hash, and every DAO uses them
+  without its own copy.
 - NEAR named accounts and sub-accounts (`tg123456.orbits.testnet`,
   `tw.ark.orbits.testnet`).
 - Protean's EVM contracts and bot ([Spaces](https://github.com/replico-labs/Spaces))

@@ -8,6 +8,15 @@ plain account standing in for the orbit. They use
 Replace `you.testnet` with your account and `orbit1.testnet` /
 `orbit2.testnet` with two more accounts you control.
 
+## 0. Protocol version
+
+The Orbits contracts are built with near-sdk 5.29, which needs protocol 84
+or later (nearcore 2.12). Check the network first:
+
+```bash
+curl -s https://rpc.testnet.near.org/status | jq .protocol_version
+```
+
 ## 1. Factory version
 
 ```bash

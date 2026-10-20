@@ -15,27 +15,27 @@ pub struct VoteOutcome {
     pub state: State,
 }
 
+#[cfg(any(feature = "ballot", feature = "council"))]
 #[near]
 impl Contract {
     /// Votes on proposal `id`. Council models count one vote per seat at
     /// once; stake-weighted models read the voter's stake at the snapshot
     /// first and count the vote when it arrives.
     pub fn vote(&mut self, id: u64, choice: Choice) -> PromiseOrValue<VoteOutcome> {
+        #[cfg(feature = "council")]
         if self.model.council().is_some() {
             return PromiseOrValue::Value(self.council_vote(id, choice));
         }
-        require!(!matches!(self.model, Model::Conviction(_)), "ERR_USE_SUPPORT");
-        let voter = env::predecessor_account_id();
-        let proposal = self.proposals.get(&id).expect("ERR_NO_PROPOSAL");
-        require!(self.state(proposal) == State::Active, "ERR_PROPOSAL_NOT_ACTIVE");
-        let snapshot = proposal.created_at;
-        require!(!self.receipts.contains_key(&(id, voter.clone())), "ERR_ALREADY_VOTED");
-        self.receipts.insert((id, voter.clone()), Receipt { choice, weight: U128(0), pending: true, via: None });
-        PromiseOrValue::Promise(self.weights_at(&voter, snapshot).then(
-            Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_vote_weight(id, voter),
-        ))
+        #[cfg(feature = "ballot")]
+        return PromiseOrValue::Promise(self.stake_vote(id, choice));
+        #[cfg(not(feature = "ballot"))]
+        env::panic_str("ERR_NOT_COUNCIL_MODEL")
     }
+}
 
+#[cfg(feature = "ballot")]
+#[near]
+impl Contract {
     /// Counts `voter`'s pending vote with the stake that arrived; drops it if
     /// they had no stake at the snapshot or the read failed.
     #[private]
@@ -70,8 +70,11 @@ impl Contract {
         let state = self.state(self.proposals.get(&id).unwrap());
         VoteOutcome { counted, weight: receipt.weight, state }
     }
+}
 
-    // --- Liquid ---
+#[cfg(feature = "liquid")]
+#[near]
+impl Contract {
 
     /// Liquid: delegates the caller's vote to `to`, replacing any earlier delegation.
     pub fn delegate(&mut self, to: AccountId) {
@@ -131,8 +134,11 @@ impl Contract {
         }
         (tip, hops)
     }
+}
 
-    // --- Optimistic ---
+#[cfg(feature = "optimistic")]
+#[near]
+impl Contract {
 
     /// Optimistic: once a challenged proposal's vote is over, pays the bond
     /// to the treasury if the proposal passed anyway, or back to the
@@ -156,6 +162,21 @@ impl Contract {
 }
 
 impl Contract {
+    /// Records `voter`'s vote as pending and reads their stake at the snapshot.
+    #[cfg(feature = "ballot")]
+    fn stake_vote(&mut self, id: u64, choice: Choice) -> Promise {
+        require!(!matches!(self.model, Model::Conviction(_)), "ERR_USE_SUPPORT");
+        let voter = env::predecessor_account_id();
+        let proposal = self.proposals.get(&id).expect("ERR_NO_PROPOSAL");
+        require!(self.state(proposal) == State::Active, "ERR_PROPOSAL_NOT_ACTIVE");
+        let snapshot = proposal.created_at;
+        require!(!self.receipts.contains_key(&(id, voter.clone())), "ERR_ALREADY_VOTED");
+        self.receipts.insert((id, voter.clone()), Receipt { choice, weight: U128(0), pending: true, via: None });
+        self.weights_at(&voter, snapshot).then(
+            Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_vote_weight(id, voter),
+        )
+    }
+
     /// Optimistic: the DAO's token sent with `{"challenge": id}` challenges
     /// that proposal. The bond is kept; returns what's beyond it.
     pub(crate) fn challenge_with_bond(&mut self, id: u64, sender_id: AccountId, amount: u128) -> u128 {

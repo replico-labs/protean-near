@@ -84,6 +84,7 @@ pub struct BetView {
     pub outcome: Option<Outcome>,
 }
 
+#[cfg(feature = "sowellian")]
 #[near]
 impl Contract {
     /// Sowellian: proposes `kind` with its success criteria, measured over

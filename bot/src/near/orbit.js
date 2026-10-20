@@ -2,8 +2,9 @@ import { nearToYocto } from "near-api-js";
 import { view, call } from "./client.js";
 
 /**
- * An orbit (orbits/orbit): one contract for every model. Views take the
- * orbit's account; writes take the signing account first.
+ * An orbit: a DAO's governance module, one Orbits module contract per
+ * model (orbits/modules), all with the same interface for what they share.
+ * Views take the orbit's account; writes take the signing account first.
  */
 
 /** Covers a proposal's storage on the orbit; it refunds what's left. */

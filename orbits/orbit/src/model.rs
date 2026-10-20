@@ -213,6 +213,21 @@ impl Model {
         }
     }
 
+    /// Whether this build runs the model: each module enables one.
+    pub fn is_built(&self) -> bool {
+        match self {
+            Model::TokenWeighted(_) => cfg!(feature = "token-weighted"),
+            Model::Quadratic(_) => cfg!(feature = "quadratic"),
+            Model::Liquid(_) => cfg!(feature = "liquid"),
+            Model::Optimistic { .. } => cfg!(feature = "optimistic"),
+            Model::Conviction(_) => cfg!(feature = "conviction"),
+            Model::Delegate(_) => cfg!(feature = "delegate"),
+            Model::Sortition(_) => cfg!(feature = "sortition"),
+            Model::Sowellian(_) => cfg!(feature = "sowellian"),
+            Model::DecisionMarkets(_) => cfg!(feature = "decision-markets"),
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Model::TokenWeighted(_) => "tokenWeighted",

@@ -47,6 +47,7 @@ pub fn settled(p: &Proposal, c: &ConvictionRules, now: u64) -> (u128, u64) {
     (conviction, at)
 }
 
+#[cfg(feature = "conviction")]
 #[near]
 impl Contract {
     /// Backs proposal `id` with all the caller's unlocked stake, moving their

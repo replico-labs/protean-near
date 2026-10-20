@@ -133,6 +133,7 @@ pub fn amount_out(amount_in: u128, reserve_in: u128, reserve_out: u128) -> u128 
     out.as_u128()
 }
 
+#[cfg(feature = "decision-markets")]
 #[near]
 impl Contract {
     /// The proposer seeds the NEAR side of their proposal's markets.

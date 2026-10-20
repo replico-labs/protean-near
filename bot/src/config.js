@@ -13,10 +13,16 @@ const NETWORKS = {
     explorer: "https://nearblocks.io",
     sputnikFactory: "sputnik-dao.near",
   },
+  // A local NEAR node (near-sandbox) set up by scripts/sandbox-setup.js
+  sandbox: {
+    rpcUrl: "http://127.0.0.1:3030",
+    explorer: "http://127.0.0.1:3030",
+    sputnikFactory: "sputnikv2.test.near",
+  },
 };
 
 export const NETWORK_ID = process.env.NEAR_NETWORK || "testnet";
-if (!NETWORKS[NETWORK_ID]) throw new Error(`NEAR_NETWORK must be "testnet" or "mainnet", not "${NETWORK_ID}"`);
+if (!NETWORKS[NETWORK_ID]) throw new Error(`NEAR_NETWORK must be "testnet", "mainnet" or "sandbox", not "${NETWORK_ID}"`);
 const network = NETWORKS[NETWORK_ID];
 
 export const RPC_URL = process.env.NEAR_RPC_URL || network.rpcUrl;

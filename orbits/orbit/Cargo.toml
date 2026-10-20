@@ -3,21 +3,31 @@ name = "orbit"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "An Orbits governance module for a Sputnik DAO: token-weighted, quadratic, optimistic, liquid, conviction, delegate or sortition"
+description = "The engine of the Orbits governance modules: each model is a feature, and each module in orbits/modules builds one"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 near-sdk = "5.24"
 orbit-common = { path = "../orbit-common" }
 uint = { version = "0.10", default-features = false }
 
+[features]
+# Every model, for tests; each module turns the defaults off and picks one.
+default = ["token-weighted", "quadratic", "liquid", "optimistic", "conviction", "delegate", "sortition", "sowellian", "decision-markets"]
+token-weighted = ["ballot"]
+quadratic = ["ballot"]
+liquid = ["ballot"]
+optimistic = ["ballot"]
+conviction = []
+delegate = ["council"]
+sortition = ["council"]
+sowellian = ["ballot"]
+decision-markets = []
+# Shared by several models: the stake-weighted vote, and council seats.
+ballot = []
+council = []
+
 [dev-dependencies]
 near-sdk = { version = "5.24", features = ["unit-testing"] }
-
-[package.metadata.near.reproducible_build]
-image = "sourcescan/cargo-near:0.19.0-rust-1.86.0"
-image_digest = "sha256:772638e343baeeea24e49062c7d424274f3441452cc06ce97fc4e5695b19fecc"
-passed_env = []
-container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]

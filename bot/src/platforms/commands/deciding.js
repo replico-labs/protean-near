@@ -66,6 +66,7 @@ const execute = {
     const dao = requireDao(ctx, this.models);
     const id = parseId(ctx.args[0], `${ctx.cmd("execute")} <id>`);
     const account = await userAccount(ctx);
+    if ((await services.orbit.getProposal(dao.orbitId, id))?.state === "Executed") throw new UserError(`#${id} was already executed.`);
     await explain(() => services.orbit.execute(account, dao.orbitId, id), {
       ERR_TIMELOCK: "Its timelock isn't over yet; see when with the proposal's status.",
       ERR_PROPOSAL_NOT_PASSED: "That proposal hasn't passed.",

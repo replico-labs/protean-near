@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { toUnits, fromUnits } from "../src/near/amounts.js";
 import { describeKind } from "../src/near/kinds.js";
 import { proposalButtons, encodeButton, decodeButton } from "../src/buttons.js";
@@ -8,6 +8,7 @@ import { parseCommandText, splitForTelegram } from "../src/platforms/telegram.js
 import { argsFromOptions, buildSlashCommands, toDiscordMarkdown } from "../src/platforms/discord.js";
 import { COMMANDS } from "../src/platforms/commands.js";
 import { kindFixtures, modelFixtures, policyFixtures } from "./kindFixtures.js";
+import { MODELS, MODULE_CONTRACT, ORBIT_PREFIX } from "../src/near/models.js";
 
 test("amounts convert without floating point", () => {
   assert.equal(toUnits("1.5", 24), 1_500_000_000_000_000_000_000_000n);
@@ -18,6 +19,18 @@ test("amounts convert without floating point", () => {
   assert.equal(fromUnits("2000000", 6), "2");
   assert.equal(fromUnits(1n, 24), "<0.0001");
   assert.equal(fromUnits(0n, 24), "0");
+});
+
+test("every model but board has its own module contract and orbit prefix", () => {
+  for (const model of Object.keys(MODELS).filter((m) => m !== "board")) {
+    const contract = MODULE_CONTRACT[model];
+    assert.ok(contract, model);
+    assert.ok(ORBIT_PREFIX[model], model);
+    // orbit_token_weighted is built from orbits/modules/token-weighted
+    const dir = contract.replace(/^orbit_/, "").replaceAll("_", "-");
+    assert.ok(existsSync(new URL(`../../orbits/modules/${dir}/Cargo.toml`, import.meta.url)), contract);
+  }
+  assert.equal(new Set(Object.values(MODULE_CONTRACT)).size, 9);
 });
 
 test("the committed fixtures match kinds.js and models.js", () => {

@@ -1654,11 +1654,83 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-conviction"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-decision-markets"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-delegate"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-liquid"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-optimistic"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-quadratic"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-sortition"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
+name = "orbit-sowellian"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
 name = "orbit-staking"
 version = "0.1.0"
 dependencies = [
  "near-contract-standards",
  "near-sdk",
+]
+
+[[package]]
+name = "orbit-token-weighted"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
 ]
 
 [[package]]

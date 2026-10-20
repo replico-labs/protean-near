@@ -40,9 +40,10 @@ pub fn council_passes(p: &Proposal, c: &CouncilRules) -> bool {
     turnout >= u128::from(c.quorum) && decisive > 0 && p.for_ * u128::from(MAX_BPS) >= decisive * u128::from(c.approval_bps)
 }
 
+#[cfg(feature = "delegate")]
 #[near]
 impl Contract {
-    // --- Delegate: elections ---
+    // --- Elections ---
 
     /// Opens an election once the current term has ended.
     pub fn start_election(&mut self) -> u64 {
@@ -239,7 +240,30 @@ impl Contract {
         recall.removed
     }
 
-    // --- Sortition ---
+    pub fn get_election_count(&self) -> u64 {
+        self.election_count
+    }
+
+    /// Election `id` with each candidate's votes so far.
+    pub fn get_election(&self, id: u64) -> Option<(Election, Vec<(AccountId, U128)>)> {
+        self.elections.get(&id).map(|e| {
+            let votes = e.candidates.iter().map(|c| (c.clone(), U128(self.election_votes.get(&(id, c.clone())).copied().unwrap_or(0)))).collect();
+            (e.clone(), votes)
+        })
+    }
+
+    pub fn get_recall_count(&self) -> u64 {
+        self.recall_count
+    }
+
+    pub fn get_recall(&self, id: u64) -> Option<Recall> {
+        self.recalls.get(&id).cloned()
+    }
+}
+
+#[cfg(feature = "sortition")]
+#[near]
+impl Contract {
 
     /// Enters the caller into the pool, if their current stake meets the threshold.
     pub fn register_eligible(&mut self) -> Promise {
@@ -293,8 +317,14 @@ impl Contract {
         self.council.clone()
     }
 
-    // --- Views ---
+    pub fn get_pool(&self) -> Vec<AccountId> {
+        self.pool.iter().cloned().collect()
+    }
+}
 
+#[cfg(feature = "council")]
+#[near]
+impl Contract {
     pub fn get_council(&self) -> Vec<AccountId> {
         self.council.clone()
     }
@@ -302,34 +332,11 @@ impl Contract {
     pub fn get_term_end(&self) -> U64 {
         U64(self.term_end)
     }
-
-    pub fn get_election_count(&self) -> u64 {
-        self.election_count
-    }
-
-    /// Election `id` with each candidate's votes so far.
-    pub fn get_election(&self, id: u64) -> Option<(Election, Vec<(AccountId, U128)>)> {
-        self.elections.get(&id).map(|e| {
-            let votes = e.candidates.iter().map(|c| (c.clone(), U128(self.election_votes.get(&(id, c.clone())).copied().unwrap_or(0)))).collect();
-            (e.clone(), votes)
-        })
-    }
-
-    pub fn get_recall_count(&self) -> u64 {
-        self.recall_count
-    }
-
-    pub fn get_recall(&self, id: u64) -> Option<Recall> {
-        self.recalls.get(&id).cloned()
-    }
-
-    pub fn get_pool(&self) -> Vec<AccountId> {
-        self.pool.iter().cloned().collect()
-    }
 }
 
 impl Contract {
     /// Council vote: one seat, one vote, counted at once.
+    #[cfg(feature = "council")]
     pub(crate) fn council_vote(&mut self, id: u64, choice: Choice) -> ballot::VoteOutcome {
         let voter = env::predecessor_account_id();
         require!(self.council.contains(&voter), "ERR_NOT_COUNCIL_MEMBER");

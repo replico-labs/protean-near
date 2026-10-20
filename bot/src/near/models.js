@@ -21,6 +21,19 @@ export const MODELS = {
   decisionMarkets: "Decision markets: pass and fail markets trade, and the higher price decides",
 };
 
+/** The Orbits module contract (orbits/modules) that runs each model, as published. */
+export const MODULE_CONTRACT = {
+  tokenWeighted: "orbit_token_weighted",
+  quadratic: "orbit_quadratic",
+  liquid: "orbit_liquid",
+  optimistic: "orbit_optimistic",
+  conviction: "orbit_conviction",
+  delegate: "orbit_delegate",
+  sortition: "orbit_sortition",
+  sowellian: "orbit_sowellian",
+  decisionMarkets: "orbit_decision_markets",
+};
+
 /** Short account prefixes for each model's orbit, e.g. "tw.ark.orbits.testnet". */
 export const ORBIT_PREFIX = { tokenWeighted: "tw", quadratic: "qv", liquid: "lq", optimistic: "op", conviction: "cv", delegate: "dg", sortition: "st", sowellian: "sw", decisionMarkets: "dm" };
 

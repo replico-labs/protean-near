@@ -5,15 +5,33 @@
 //! passes and its timelock is over, `execute` adds it to the core and
 //! approves it with the orbit's single vote, and Sputnik executes it.
 //!
-//! One contract serves every model (model.rs), so the logic that matters
-//! most, sending a passed proposal to the core exactly once and only
-//! swapping to an orbit bound to the same core, is shared by all of them.
-//! Stake comes from the DAO's staking contract (orbits/orbit-staking),
-//! read by snapshot.
+//! This crate is the engine every Orbits module is built from. Each model
+//! (model.rs) is a Cargo feature, and each module under orbits/modules is
+//! its own contract that enables one feature, so it carries only its own
+//! model's methods. The logic that matters most, sending a passed proposal
+//! to the core exactly once and only swapping to an orbit bound to the same
+//! core, is written once here and shared by all of them. Stake comes from
+//! the DAO's staking contract (orbits/orbit-staking), read by snapshot.
 //!
-//! Modules: ballot.rs (token-weighted, quadratic, liquid and optimistic
+//! Files: ballot.rs (token-weighted, quadratic, liquid and optimistic
 //! votes), conviction.rs, council.rs (delegate and sortition),
 //! sowellian.rs and markets.rs (decision markets).
+
+// A module built with one model leaves the other models' helpers unused.
+#![cfg_attr(
+    not(all(
+        feature = "token-weighted",
+        feature = "quadratic",
+        feature = "liquid",
+        feature = "optimistic",
+        feature = "conviction",
+        feature = "delegate",
+        feature = "sortition",
+        feature = "sowellian",
+        feature = "decision-markets"
+    )),
+    allow(dead_code, unused_imports, unused_variables)
+)]
 
 mod ballot;
 mod conviction;
@@ -214,6 +232,7 @@ impl Contract {
     /// `council` starts the council of a delegate or sortition orbit.
     #[init]
     pub fn new(dao_id: AccountId, staking_id: AccountId, token_id: AccountId, model: Model, council: Option<Vec<AccountId>>) -> Self {
+        require!(model.is_built(), format!("ERR_MODEL: this module doesn't run {}", model.name()));
         model.validate();
         let council = council.unwrap_or_default();
         if let Some(size) = match &model {
@@ -405,34 +424,46 @@ impl Contract {
         require!(env::predecessor_account_id() == self.token_id, "ERR_WRONG_TOKEN");
         let msg: Value = serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("ERR_INVALID_MESSAGE"));
         let id_of = |key: &str| msg.get(key).and_then(Value::as_u64);
-        let unused = if let Some(id) = id_of("challenge") {
-            self.challenge_with_bond(id, sender_id, amount.0)
-        } else if let Some(id) = id_of("proposal_bond") {
-            self.pay_proposal_bond(id, sender_id, amount.0)
-        } else if let Some(id) = id_of("position") {
-            let yes = match msg.get("side").and_then(Value::as_str) {
-                Some("Yes") => true,
-                Some("No") => false,
-                _ => env::panic_str("ERR_INVALID_MESSAGE: side"),
-            };
-            self.take_position(id, sender_id, amount.0, yes)
-        } else if let Some(id) = id_of("resolve") {
-            let outcome = match msg.get("outcome").and_then(Value::as_str) {
-                Some("Success") => sowellian::Outcome::Success,
-                Some("Failure") => sowellian::Outcome::Failure,
-                _ => env::panic_str("ERR_INVALID_MESSAGE: outcome"),
-            };
-            self.propose_resolution(id, sender_id, amount.0, outcome)
-        } else if let Some(id) = id_of("dispute") {
-            self.dispute_resolution(id, sender_id, amount.0)
-        } else if let Some(id) = id_of("seed") {
-            self.seed_base(id, sender_id, amount.0)
-        } else if let Some(id) = id_of("split") {
-            self.split_base(id, sender_id, amount.0)
-        } else {
-            env::panic_str("ERR_INVALID_MESSAGE")
-        };
-        PromiseOrValue::Value(U128(unused))
+        let unused = |n: u128| PromiseOrValue::Value(U128(n));
+        #[cfg(feature = "optimistic")]
+        if let Some(id) = id_of("challenge") {
+            return unused(self.challenge_with_bond(id, sender_id, amount.0));
+        }
+        #[cfg(feature = "sowellian")]
+        {
+            if let Some(id) = id_of("proposal_bond") {
+                return unused(self.pay_proposal_bond(id, sender_id, amount.0));
+            }
+            if let Some(id) = id_of("position") {
+                let yes = match msg.get("side").and_then(Value::as_str) {
+                    Some("Yes") => true,
+                    Some("No") => false,
+                    _ => env::panic_str("ERR_INVALID_MESSAGE: side"),
+                };
+                return unused(self.take_position(id, sender_id, amount.0, yes));
+            }
+            if let Some(id) = id_of("resolve") {
+                let outcome = match msg.get("outcome").and_then(Value::as_str) {
+                    Some("Success") => sowellian::Outcome::Success,
+                    Some("Failure") => sowellian::Outcome::Failure,
+                    _ => env::panic_str("ERR_INVALID_MESSAGE: outcome"),
+                };
+                return unused(self.propose_resolution(id, sender_id, amount.0, outcome));
+            }
+            if let Some(id) = id_of("dispute") {
+                return unused(self.dispute_resolution(id, sender_id, amount.0));
+            }
+        }
+        #[cfg(feature = "decision-markets")]
+        {
+            if let Some(id) = id_of("seed") {
+                return unused(self.seed_base(id, sender_id, amount.0));
+            }
+            if let Some(id) = id_of("split") {
+                return unused(self.split_base(id, sender_id, amount.0));
+            }
+        }
+        env::panic_str("ERR_INVALID_MESSAGE")
     }
 
     /// Makes this orbit the staking contract's locker, once it governs the
@@ -560,7 +591,9 @@ impl Contract {
     /// decision-market seeds if the markets never opened.
     fn refund_on_cancel(&mut self, id: u64) {
         match &self.model {
+            #[cfg(feature = "sowellian")]
             Model::Sowellian(_) => self.refund_sowellian_bond(id),
+            #[cfg(feature = "decision-markets")]
             Model::DecisionMarkets(_) => self.refund_seeds(id),
             _ => {}
         }
@@ -636,6 +669,7 @@ impl Contract {
                 }
                 true
             }
+            #[cfg(feature = "decision-markets")]
             Model::DecisionMarkets(rules) => {
                 if now < p.end {
                     return State::Active;
