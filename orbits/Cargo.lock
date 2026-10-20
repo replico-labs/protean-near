@@ -891,6 +891,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
+name = "governance-token"
+version = "0.1.0"
+dependencies = [
+ "near-contract-standards",
+ "near-sdk",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1630,10 +1638,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "orbit-common"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "orbits-core-tests"
 version = "0.1.0"
 dependencies = [
  "near-sdk",
+ "orbit-common",
  "serde_json",
  "sputnikdao2",
 ]
@@ -2203,6 +2219,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sputnik-staking"
+version = "1.0.0"
+dependencies = [
+ "hex",
+ "near-contract-standards",
+ "near-sdk",
+]
+
+[[package]]
 name = "sputnikdao2"
 version = "2.3.1"
 source = "git+https://github.com/near-daos/sputnik-dao-contract?rev=5434a59dec23ee0c49df8c8c4350c208a7e75b0b#5434a59dec23ee0c49df8c8c4350c208a7e75b0b"
@@ -2387,6 +2412,14 @@ name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
+name = "token-weight-orbit"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit-common",
+]
 
 [[package]]
 name = "toml_datetime"

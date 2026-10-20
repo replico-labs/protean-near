@@ -1,0 +1,22 @@
+[package]
+name = "token-weight-orbit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Orbit where staked tokens vote, with delegation, through Sputnik's staking contract"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5.24"
+orbit-common = { path = "../orbit-common" }
+
+[dev-dependencies]
+near-sdk = { version = "5.24", features = ["unit-testing"] }
+
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.19.0-rust-1.86.0"
+image_digest = "sha256:772638e343baeeea24e49062c7d424274f3441452cc06ce97fc4e5695b19fecc"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]

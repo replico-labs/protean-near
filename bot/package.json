@@ -1,0 +1,24 @@
+{
+  "name": "protean-near-bot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Protean on NEAR: run a Sputnik DAO with Orbits governance from Telegram and Discord",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "telegram": "node src/platforms/telegram.js",
+    "discord": "node src/platforms/discord.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.1153.0",
+    "@grammyjs/runner": "^2.0.3",
+    "@supabase/supabase-js": "^2.118.0",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.8",
+    "grammy": "^1.46.0",
+    "near-api-js": "^7.3.1"
+  }
+}

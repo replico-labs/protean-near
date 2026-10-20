@@ -35,15 +35,27 @@ mod tests {
     fn new_dao() -> Contract {
         as_caller("sputnikv2.testnet");
         let policy: VersionedPolicy = serde_json::from_str(POLICY).expect("policy JSON must parse");
+        let generated: VersionedPolicy =
+            serde_json::from_str(&orbit_common::core_policy(&acc("orbit1.testnet")).to_string()).unwrap();
+        assert_eq!(generated, policy, "orbit_common::core_policy matches the documented policy");
         let config: Config = serde_json::from_str(r#"{"name":"mydao","purpose":"test","metadata":""}"#).unwrap();
         Contract::new(config, policy)
     }
 
+    /// Makes the same two calls an orbit makes, from the argument bytes
+    /// orbit_common builds, decoded with Sputnik's own types.
     fn propose_and_approve(dao: &mut Contract, orbit: &str, kind: ProposalKind) -> u64 {
+        let kind = serde_json::to_value(&kind).unwrap();
+        assert!(orbit_common::classify(&kind).is_ok(), "orbit would refuse {kind}");
         as_caller(orbit);
-        let id = dao.add_proposal(ProposalInput { description: "orbit-passed".into(), kind });
-        let kind = dao.get_proposal(id).proposal.kind;
-        dao.act_proposal(id, Action::VoteApprove, kind, None);
+        let args: serde_json::Value =
+            serde_json::from_slice(&orbit_common::add_proposal_args("orbit-passed", &kind)).unwrap();
+        let input: ProposalInput = serde_json::from_value(args["proposal"].clone()).unwrap();
+        let id = dao.add_proposal(input);
+        let args: serde_json::Value = serde_json::from_slice(&orbit_common::act_proposal_args(id, &kind)).unwrap();
+        let action: Action = serde_json::from_value(args["action"].clone()).unwrap();
+        let proposal: ProposalKind = serde_json::from_value(args["proposal"].clone()).unwrap();
+        dao.act_proposal(args["id"].as_u64().unwrap(), action, proposal, None);
         id
     }
 
@@ -78,13 +90,13 @@ mod tests {
     }
 
     fn swap_to(dao: &mut Contract, from: &str, to: &str) {
-        let role: RolePermission = serde_json::from_value(serde_json::json!({
-            "name": "governance",
-            "kind": { "Group": [to] },
-            "permissions": ["*:AddProposal","*:VoteApprove","*:VoteReject","*:VoteRemove","*:Finalize"],
-            "vote_policy": {}
-        })).unwrap();
-        let id = propose_and_approve(dao, from, ProposalKind::ChangePolicyAddOrUpdateRole { role });
+        let kind_json = orbit_common::swap_kind(&acc(to));
+        assert_eq!(
+            orbit_common::classify(&kind_json),
+            Ok(orbit_common::KindClass::Swap { new_orbit: acc(to) })
+        );
+        let kind: ProposalKind = serde_json::from_value(kind_json).unwrap();
+        let id = propose_and_approve(dao, from, kind);
         assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::Approved);
     }
 
@@ -116,5 +128,25 @@ mod tests {
         let id = dao.add_proposal(ProposalInput { description: "x".into(), kind: ProposalKind::Vote });
         dao.act_proposal(id, Action::VoteReject, ProposalKind::Vote, None);
         assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::Rejected);
+    }
+
+    /// Every kind of proposal the bot makes (bot/test/fixtures/kinds.json):
+    /// the orbit must accept it, and Sputnik must decode and execute it.
+    #[test]
+    fn bot_proposal_kinds_work_on_sputnik() {
+        let fixtures: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../../../bot/test/fixtures/kinds.json")).unwrap();
+        assert!(!fixtures.is_empty());
+        for (name, kind_json) in fixtures {
+            let class = orbit_common::classify(&kind_json).unwrap_or_else(|e| panic!("{name}: orbit refuses it: {e}"));
+            let kind: ProposalKind =
+                serde_json::from_value(kind_json).unwrap_or_else(|e| panic!("{name}: Sputnik can't decode it: {e}"));
+            if let orbit_common::KindClass::Swap { new_orbit } = class {
+                assert_eq!(new_orbit, acc("q.mydao.orbits.testnet"));
+            }
+            let mut dao = new_dao();
+            let id = propose_and_approve(&mut dao, "orbit1.testnet", kind);
+            assert_eq!(dao.get_proposal(id).proposal.status, ProposalStatus::Approved, "{name}");
+        }
     }
 }
