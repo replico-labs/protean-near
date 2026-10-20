@@ -1,0 +1,11 @@
+[package]
+name = "orbits-core-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Checks the Orbits core policy against the unmodified Sputnik DAO contract"
+
+[dependencies]
+sputnikdao2 = { git = "https://github.com/near-daos/sputnik-dao-contract", rev = "5434a59dec23ee0c49df8c8c4350c208a7e75b0b" }
+near-sdk = { version = "5.24", features = ["unit-testing", "global-contracts"] }
+serde_json = "1"
