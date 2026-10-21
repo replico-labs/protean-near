@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { toUnits, fromUnits } from "../src/near/amounts.js";
 import { describeKind } from "../src/near/kinds.js";
 import { proposalButtons, encodeButton, decodeButton } from "../src/buttons.js";
-import { parseCommandText, splitForTelegram } from "../src/platforms/telegram.js";
+import { parseCommandText, splitForTelegram, menuFor, syncChatMenu } from "../src/platforms/telegram.js";
 import { argsFromOptions, buildSlashCommands, toDiscordMarkdown } from "../src/platforms/discord.js";
 import { COMMANDS } from "../src/platforms/commands.js";
 import { kindFixtures, modelFixtures, policyFixtures } from "./kindFixtures.js";
@@ -77,4 +77,39 @@ test("Discord slash commands build, and options become args", () => {
   const values = { amount: "5", currency: "NEAR", to: "`maya.testnet`", description: "logo  design" };
   assert.deepEqual(argsFromOptions(pay, (n) => values[n]), ["5", "NEAR", "maya.testnet", "logo", "design"]);
   assert.equal(toDiscordMarkdown("*bold* `*code*`"), "**bold** `*code*`");
+});
+
+test("Telegram's command menu follows the chat's model", async () => {
+  const names = (model) => menuFor(model).map((c) => c.command);
+  // No DAO yet: getting started, nothing that needs a DAO.
+  assert.ok(["help", "createdao", "link", "wallet"].every((c) => names(null).includes(c)));
+  assert.deepEqual(names(null), ["help", "createdao", "link", "wallet", "send"]);
+  // Each model gets its own commands and not the others'.
+  assert.ok(names("tokenWeighted").includes("vote") && !names("tokenWeighted").includes("support"));
+  assert.ok(names("conviction").includes("support") && !names("conviction").includes("vote"));
+  assert.ok(names("delegate").includes("startelection") && !names("tokenWeighted").includes("startelection"));
+  assert.ok(names("decisionMarkets").includes("trade") && !names("quadratic").includes("trade"));
+  // Telegram's limits: at most 100 commands, names of 1-32 lowercase characters.
+  for (const model of [null, ...Object.keys(MODELS)]) {
+    assert.ok(menuFor(model).length <= 100, String(model));
+    assert.ok(menuFor(model).every((c) => /^[a-z0-9_]{1,32}$/.test(c.command) && c.description.length >= 1), String(model));
+  }
+
+  const calls = [];
+  const api = {
+    setMyCommands: async (commands, opts) => calls.push(["set", commands.length, opts.scope]),
+    deleteMyCommands: async (opts) => calls.push(["delete", opts.scope]),
+  };
+  await syncChatMenu(api, -100, { model: "conviction" });
+  await syncChatMenu(api, -100, null);
+  assert.deepEqual(calls, [
+    ["set", menuFor("conviction").length, { type: "chat", chat_id: -100 }],
+    ["delete", { type: "chat", chat_id: -100 }],
+  ]);
+  // A failure (say the bot left the chat) is logged, not thrown.
+  const failing = { setMyCommands: async () => Promise.reject(Object.assign(new Error("Forbidden"), { description: "Forbidden" })) };
+  const error = console.error;
+  console.error = () => {};
+  await syncChatMenu(failing, -100, { model: "quadratic" });
+  console.error = error;
 });

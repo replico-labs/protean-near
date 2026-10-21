@@ -2,7 +2,8 @@
 import "../logRedaction.js";
 import { Bot, GrammyError } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
-import { COMMANDS, ADMIN_COMMANDS, runCommand } from "./commands.js";
+import { COMMANDS, ADMIN_COMMANDS, runCommand, commandsFor } from "./commands.js";
+import { services } from "./services.js";
 import { decodeButton, BUTTON_COMMANDS, telegramKeyboard } from "../buttons.js";
 
 /**
@@ -44,6 +45,36 @@ export function splitForTelegram(text, limit = TELEGRAM_MAX_MESSAGE) {
   }
   if (current) chunks.push(current);
   return chunks.length ? chunks : [""];
+}
+
+/** Telegram's command menu for `model`'s commands (null: a chat with no DAO yet). */
+export function menuFor(model) {
+  return commandsFor(model).map(([command, c]) => ({ command, description: c.description.slice(0, 256) }));
+}
+
+/**
+ * Sets the "/" menu in chat `chatId` to the commands of the DAO it's linked
+ * to, so members see only what applies; with no link the chat falls back to
+ * the bot's default menu (setup and wallet commands).
+ */
+export async function syncChatMenu(api, chatId, link) {
+  const scope = { type: "chat", chat_id: chatId };
+  try {
+    if (link) await api.setMyCommands(menuFor(link.model), { scope });
+    else await api.deleteMyCommands({ scope });
+  } catch (err) {
+    // The bot may have left the chat; the menu is a convenience, never a blocker.
+    console.error(`[telegram] Couldn't update the command menu in ${chatId}:`, err.description ?? err.message);
+  }
+}
+
+/** Runs a command, then updates the chat's menu if the command changed what the chat runs. */
+async function runAndSyncMenu(ctx, name, commandCtx) {
+  const before = services.db.getChatDao("telegram", commandCtx.chatId);
+  const result = await runCommand(name, commandCtx);
+  const after = services.db.getChatDao("telegram", commandCtx.chatId);
+  if (before?.model !== after?.model || before?.daoId !== after?.daoId) await syncChatMenu(ctx.api, ctx.chat.id, after);
+  return result;
 }
 
 async function isChatAdmin(ctx) {
@@ -98,7 +129,7 @@ export function createTelegramBot(token) {
     const commandCtx = commandContext(ctx, args);
     if (ADMIN_COMMANDS.has(command) && !commandCtx.isDirect) commandCtx.isAdmin = await isChatAdmin(ctx);
     await ctx.replyWithChatAction("typing").catch(() => {});
-    await send(ctx, await runCommand(command, commandCtx));
+    await send(ctx, await runAndSyncMenu(ctx, command, commandCtx));
   });
 
   // A button press runs its command as the presser; the result goes to the chat.
@@ -107,7 +138,7 @@ export function createTelegramBot(token) {
     if (!decoded || !BUTTON_COMMANDS.has(decoded[0])) return ctx.answerCallbackQuery();
     const [name, args] = decoded;
     await ctx.answerCallbackQuery({ text: `Running ${cmd(name)} ${args.join(" ")}...` });
-    const result = await runCommand(name, commandContext(ctx, args));
+    const result = await runAndSyncMenu(ctx, name, commandContext(ctx, args));
     const who = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
     await send(ctx, { ...result, text: `${who} → \`${cmd(name)} ${args.join(" ")}\`\n\n${result.text}` });
   });
@@ -119,7 +150,9 @@ export function createTelegramBot(token) {
 export async function startTelegramBot(token) {
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required.");
   const bot = createTelegramBot(token);
-  await bot.api.setMyCommands(Object.entries(COMMANDS).map(([command, c]) => ({ command, description: c.description.slice(0, 256) })));
+  // Default menu: what any chat can do before it has a DAO. Linked chats get their model's commands.
+  await bot.api.setMyCommands(menuFor(null));
+  for (const [chatId, link] of services.db.chatsOn("telegram")) await syncChatMenu(bot.api, chatId, link);
   const runner = run(bot);
   console.log(`[telegram] Running as @${(await bot.api.getMe()).username}`);
   return runner;

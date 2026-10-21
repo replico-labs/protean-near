@@ -34,6 +34,7 @@ const wallet = {
 
 const stake = {
   section: "Your wallet",
+  needsDao: true,
   usage: "<amount>",
   description: "Stake tokens: your stake is your voting weight (from the next proposal on)",
   options: [{ name: "amount", description: "How many tokens", required: true }],
@@ -53,6 +54,7 @@ const stake = {
 
 const unstake = {
   section: "Your wallet",
+  needsDao: true,
   usage: "<amount>",
   description: "Take staked tokens back to your account",
   options: [{ name: "amount", description: "How many tokens", required: true }],

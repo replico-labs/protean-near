@@ -39,6 +39,7 @@ async function proposeSowellian(ctx, dao, account, token, description, kind) {
 
 const pay = {
   section: "Proposing",
+  needsDao: true,
   usage: "<amount> <NEAR|token> <account> <description>",
   description: "Propose paying from the treasury",
   options: [
@@ -63,6 +64,7 @@ const pay = {
 
 const signal = {
   section: "Proposing",
+  needsDao: true,
   usage: "<question or statement>",
   description: "Propose a decision with nothing to execute",
   options: [{ name: "text", description: "The question or statement", required: true, rest: true }],

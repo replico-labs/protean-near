@@ -90,7 +90,7 @@ Expect every suite to pass (68 tests). They show, among others, that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 29`. The commands run against a fake chain.
+Expect `pass 30`. The commands run against a fake chain.
 
 ### 3. Run it on a local NEAR node
 
@@ -155,8 +155,16 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 | Sowellian | `/position <id> yes\|no <amount>` · `/proposeresolution <id> success\|failure` · `/dispute <id>` · `/adjudicate <id> <outcome>` · `/finalizeresolution <id>` · `/claimposition <id>` · `/forfeitbond <id>` |
 | Decision markets | `/seed <id> <tokens> <NEAR>` · `/split <id> <amount> <NEAR\|token>` · `/trade <id> pass\|fail <amount> <NEAR\|token>` · `/merge` · `/redeem <id>` · `/reclaimliquidity <id>` |
 
-`/help` shows only the commands for the chat's model. Accounts can be
-written as `me`.
+`/help` and Telegram's "/" command menu show only the commands for the
+chat's model; a chat without a DAO sees just `/help`, `/createdao`,
+`/link`, `/wallet` and `/send`. The menu updates on its own when a chat
+creates, links, unlinks or switches its DAO. Accounts can be written as
+`me`.
+
+Each command is defined once in `bot/src/platforms/commands/`, one file
+per topic (`setup.js`, `wallet.js`, `dao.js`, `proposing.js`,
+`deciding.js`, `council.js`, `markets.js`), and Telegram and Discord both
+run them.
 
 ## Accounts and keys
 

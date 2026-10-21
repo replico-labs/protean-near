@@ -37,6 +37,7 @@ function rulesLines(model, s, token) {
 
 const daoInfo = {
   section: "The DAO",
+  needsDao: true,
   usage: "",
   description: "The DAO, its governance model and rules",
   options: [],
@@ -59,6 +60,7 @@ const daoInfo = {
 
 const treasury = {
   section: "The DAO",
+  needsDao: true,
   usage: "",
   description: "What the DAO holds",
   options: [],
@@ -72,6 +74,7 @@ const treasury = {
 
 const proposals = {
   section: "The DAO",
+  needsDao: true,
   usage: "",
   description: "The latest proposals",
   options: [],
@@ -86,6 +89,7 @@ const proposals = {
 
 const proposal = {
   section: "The DAO",
+  needsDao: true,
   usage: "<id>",
   description: "One proposal: action, votes and status",
   options: [{ name: "id", description: "Proposal number", required: true, type: "integer" }],

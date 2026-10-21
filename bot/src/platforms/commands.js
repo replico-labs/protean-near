@@ -24,8 +24,9 @@ import { MARKET_COMMANDS } from "./commands/markets.js";
  *   cmd(name) how this platform spells a command, for usage hints
  *
  * Replies use Telegram-style markdown (*bold*, `code`): { text, ephemeral?,
- * buttons? }. `options` drives Discord's slash commands; `section`, `usage`
- * and `models` (the models a command applies to) drive help.
+ * buttons? }. `options` drives Discord's slash commands; `section`, `usage`,
+ * `models` (the models a command applies to) and `needsDao` drive help and
+ * Telegram's command menu.
  */
 
 // Help sections, in order, and the topic word for each.
@@ -39,12 +40,12 @@ const help = {
   options: [{ name: "topic", description: "One topic, or all", required: false, choices: [...Object.values(SECTIONS), "all"] }],
   async run(ctx) {
     const dao = services.db.getChatDao(ctx.platform, ctx.chatId);
-    const applies = (c) => !c.models || (dao && c.models.includes(dao.model));
+    const available = commandsFor(dao?.model ?? null);
     const sections = Object.entries(SECTIONS).map(([title, key]) => ({
       key,
       title,
-      lines: Object.entries(COMMANDS)
-        .filter(([, c]) => c.section === title && applies(c))
+      lines: available
+        .filter(([, c]) => c.section === title)
         .map(([name, c]) => `\`${ctx.cmd(name)}${c.usage ? " " + c.usage : ""}\` — ${c.description}`),
     }));
     const intro = dao
@@ -65,6 +66,15 @@ export const COMMANDS = {
   ...COUNCIL_COMMANDS,
   ...MARKET_COMMANDS,
 };
+
+/**
+ * The commands that apply in a chat whose DAO runs `model`, or with no DAO
+ * yet (null), as [name, command]: the same filter /help uses. `models`
+ * limits a command to some models; `needsDao` to chats that have a DAO.
+ */
+export function commandsFor(model) {
+  return Object.entries(COMMANDS).filter(([, c]) => (c.models ? model && c.models.includes(model) : model || !c.needsDao));
+}
 
 /** Creating or (re)linking decides what the whole chat runs, so only admins may. */
 export const ADMIN_COMMANDS = new Set(["createdao", "link", "unlink"]);

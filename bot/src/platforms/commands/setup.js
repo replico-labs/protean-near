@@ -97,6 +97,7 @@ const link = {
 
 const unlink = {
   section: "Setup",
+  needsDao: true,
   usage: "",
   description: "Unlink this chat's DAO (admins). The DAO itself is unchanged",
   options: [],
@@ -109,6 +110,7 @@ const unlink = {
 
 const switchmodel = {
   section: "Setup",
+  needsDao: true,
   usage: "<model> [members...]",
   description: "Propose switching the DAO to another governance model; treasury and stakes stay",
   options: [

@@ -4,7 +4,7 @@ import * as core from "../near/core.js";
 import * as deploy from "../near/deploy.js";
 import { getOrCreateUserAccount, ensureGas, findUserAccountId } from "../near/wallets.js";
 import { availableBalance } from "../near/client.js";
-import { getChatDao, setChatDao, removeChatDao } from "../db.js";
+import { getChatDao, setChatDao, removeChatDao, chatsOn } from "../db.js";
 import { isWalletStoreConfigured } from "../walletStore.js";
 
 /**
@@ -17,6 +17,6 @@ export const services = {
   core,
   deploy,
   wallets: { getOrCreateUserAccount, ensureGas, findUserAccountId, availableBalance },
-  db: { getChatDao, setChatDao, removeChatDao },
+  db: { getChatDao, setChatDao, removeChatDao, chatsOn },
   isWalletStoreConfigured,
 };
