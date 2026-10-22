@@ -782,7 +782,8 @@ impl Contract {
         let kind: Value = serde_json::from_str(&proposal.kind).expect("ERR_KIND_NOT_JSON");
         Promise::new(self.dao_id.clone())
             .function_call_weight("act_proposal", act_proposal_args(core_id, &kind), NearToken::from_yoctonear(0), GAS_ACT_PROPOSAL, GasWeight(1))
-            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_approved(id))
+            // All leftover gas to act_proposal, which runs the proposal's own calls; the callback needs only its own.
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).with_unused_gas_weight(0).on_approved(id))
     }
 
     fn end_send(&mut self, id: u64) {

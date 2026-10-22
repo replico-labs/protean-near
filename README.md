@@ -70,7 +70,7 @@ supabase/schema.sql        the bot's database
 cd orbits && cargo test
 ```
 
-Expect every suite to pass (68 tests). They show, among others, that:
+Expect every suite to pass (70 tests). They show, among others, that:
 
 - a Sputnik DAO whose only member is an orbit executes what the orbit passes,
   refuses everyone else, and moves to a new orbit in one proposal;
@@ -90,7 +90,7 @@ Expect every suite to pass (68 tests). They show, among others, that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 30`. The commands run against a fake chain.
+Expect `pass 48`. The commands run against a fake chain.
 
 ### 3. Run it on a local NEAR node
 
@@ -146,6 +146,10 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 | Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` |
 | The DAO | `/dao` · `/treasury` · `/proposals` · `/proposal <id>` · `/council` |
 | Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
+| NEAR Intents | `/buy <amount> <from> <to>[@chain] [slippage%]` · `/paychain <amount> <token>@<chain> <address> <description>` · `/intentsstatus <id>` · `/intentswithdraw <amount> <token>` |
+| EVM (Chain Signatures) | `/evm` · `/aave supply\|withdraw <amount\|all>` (Aave on Base) |
+| Hyperliquid | `/hyperliquid` · `/hlagent <address> [name]` · `/hlrevoke [name]` · `/hlsend <amount> <address>` |
+| Treasury | `/swap <amount> <from> <to> [slippage%]` (on Rhea) · `/liquidstake <amount> [linear\|metapool\|nearx]` · `/liquidunstake <amount> [provider]` · `/liquidwithdraw [provider]` |
 | Deciding | `/vote <id> for\|against\|abstain` · `/execute <id>` · `/cancel <id>` |
 | Optimistic | `/challenge <id>` · `/resolvechallenge <id>` |
 | Liquid | `/delegate <account>` · `/undelegate` · `/resolve <id> [delegator]` |
@@ -157,7 +161,43 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 
 `/help` and Telegram's "/" command menu show only the commands for the
 chat's model; a chat without a DAO sees just `/help`, `/createdao`,
-`/link`, `/wallet` and `/send`. The menu updates on its own when a chat
+`/link`, `/wallet` and `/send`.
+
+The treasury commands propose putting DAO funds to work on NEAR, voted on
+like any other proposal: swaps on Rhea (formerly Ref Finance), with a
+minimum output so a swap reverts rather than fill at a worse price, and
+liquid staking with LiNEAR, Meta Pool or Stader (NearX). `/treasury` lists what the DAO
+holds, including swapped tokens and staked NEAR.
+
+Through [NEAR Intents](https://docs.near-intents.org/) (mainnet), a DAO can
+buy any token it lists (`/buy 100 USDC BTC`) and pay an exact amount to an
+address on 30+ chains (`/paychain 500 USDC@sol <address> March design
+work`). The bot gets a live 1Click quote and proposes depositing into it; it
+only proposes when the quote lasts longer than the proposal can still
+execute, because depositing into an expired quote can lose the funds. If
+the price moves past the slippage, the deposit is refunded to the DAO's own
+NEAR Intents account, and `/intentswithdraw` brings it back. Bought assets
+that live on other chains (BTC, ETH...) stay in that account.
+
+With NEAR [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures),
+each DAO also has its own address on EVM chains, derived from its NEAR
+account, which only its proposals can sign for (`/evm` shows it). `/aave
+supply 100` proposes the Base transactions (approve, then supply to Aave);
+the proposal carries them unsigned in its description, so anyone can check
+what the DAO is signing, and asks NEAR's signing network to sign them. When
+it executes, the bot takes the signatures from the execution, checks each
+recovers to the DAO's address, and sends the transactions. Fund the address
+through NEAR Intents: `/paychain 100 USDC@base dao <description>`.
+
+The same address is the DAO's Hyperliquid account; NEAR Intents funds it
+directly (`/paychain 500 USDC@hypercore dao <description>`). Voting on every
+order would be too slow for perps, so the DAO appoints a trading agent by
+proposal (`/hlagent <address>`): a trader, a bot or an AI agent that can
+place and cancel orders for the DAO's account but can't withdraw.
+`/hlrevoke` replaces it with an address nobody holds, and moving USDC out
+(`/hlsend`) takes a proposal. These are Hyperliquid's own signed actions,
+signed by the DAO's key; Hyperliquid accepts them for about three days, so
+the proposal must execute by then (the proposal says when). The menu updates on its own when a chat
 creates, links, unlinks or switches its DAO. Accounts can be written as
 `me`.
 
@@ -179,6 +219,11 @@ access key and use shared code by hash, so their code can't be changed.
 
 - [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract) (MIT),
   unmodified, as every DAO's core.
+- [Rhea Finance](https://rhea.finance/) (formerly Ref Finance) for swaps,
+  and [LiNEAR](https://github.com/linear-protocol/LiNEAR),
+  [Meta Pool](https://github.com/Narwallets/meta-pool) and
+  [Stader NearX](https://github.com/stader-labs/near-liquid-token) for
+  liquid staking.
 - NEAR global contracts: the nine modules and the staking and token
   contracts are published once by code hash, and every DAO uses them
   without its own copy.

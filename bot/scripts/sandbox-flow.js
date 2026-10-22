@@ -91,6 +91,19 @@ async function advance(minutes) {
 }
 
 const step = (title) => console.log(`\n== ${title}`);
+
+/** Alice proposes with `line`; returns the new proposal's number. */
+async function propose(line) {
+  const reply = await run(1, line, { expect: /New proposal/ });
+  return Number(/\*#(\d+)\*/.exec(reply.text)[1]);
+}
+
+/** Everyone votes for proposal `id`, the clock passes its vote and timelock, and carol executes it. */
+async function pass(id) {
+  for (const u of [1, 2, 3]) await run(u, `vote ${id} for`);
+  await advance(2.5);
+  return run(3, `execute ${id}`, { expect: /executed/i });
+}
 const link = () => links[`telegram:${CHAT}`];
 const near = (yocto) => `${yoctoToNear(yocto)} NEAR`;
 const userName = { 1: "alice", 2: "bob", 3: "carol" };
@@ -168,11 +181,169 @@ console.log(`  ✔ against ${p.against_votes} (√ of alice's 500k) vs for ${p.f
 await advance(2.5);
 await run(1, "execute 0", { expect: /executed/i });
 
+if (process.env.RHEA_EXCHANGE_ID) {
+  // Venues from scripts/sandbox-venues.js: Rhea's exchange with a NEAR/USDC pool, and LiNEAR.
+  const usdc = JSON.parse(process.env.KNOWN_TOKENS).USDC;
+  const usdcOf = async (accountId) => BigInt(await view(usdc, "ft_balance_of", { account_id: accountId }));
+  const linear = process.env.LINEAR_ID;
+
+  step("Treasury: swap 1 NEAR for USDC on Rhea, by proposal");
+  await operatorAccount().transfer({ receiverId: daoId, amount: nearToYocto("5") });
+  const nearBefore = await availableBalance(daoId);
+  const usdcStart = await usdcOf(daoId);
+  const quoted = BigInt(await view(process.env.RHEA_EXCHANGE_ID, "get_return", { pool_id: 0, token_in: process.env.WRAP_NEAR_ID, amount_in: String(nearToYocto("1")), token_out: usdc }));
+  await pass(await propose("swap 1 NEAR USDC"));
+  const usdcAfter = await usdcOf(daoId);
+  assert.ok(usdcAfter - usdcStart >= (quoted * 99n) / 100n, `the treasury got ${usdcAfter - usdcStart} USDC units for a quote of ${quoted}`);
+  assert.ok(nearBefore - (await availableBalance(daoId)) >= nearToYocto("1"), "1 NEAR left the treasury");
+  console.log(`  ✔ the treasury sold 1 NEAR for ${Number(usdcAfter - usdcStart) / 1e6} USDC (quoted ${Number(quoted) / 1e6})`);
+
+  step("Treasury: swap USDC back to NEAR, with a tight 0.5% slippage");
+  await pass(await propose("swap 2 USDC NEAR 0.5%"));
+  assert.equal(await usdcOf(daoId), usdcAfter - 2_000_000n);
+  console.log(`  ✔ 2 USDC sold; the treasury holds ${Number(await usdcOf(daoId)) / 1e6} USDC`);
+
+  step("Treasury: a swap whose minimum can't be met reverts and keeps the funds");
+  const id = await propose("swap 1 NEAR USDC 0.01%");
+  // Someone else buys USDC first, moving the price past the 0.01% the proposal allows.
+  const trader = signingAccount(OPERATOR_ACCOUNT_ID, process.env.NEAR_OPERATOR_PRIVATE_KEY);
+  await call(trader, process.env.WRAP_NEAR_ID, "storage_deposit", { account_id: OPERATOR_ACCOUNT_ID, registration_only: true }, { deposit: nearToYocto("0.00125") });
+  await call(trader, process.env.WRAP_NEAR_ID, "near_deposit", {}, { deposit: nearToYocto("20") });
+  await call(trader, usdc, "storage_deposit", { account_id: OPERATOR_ACCOUNT_ID, registration_only: true }, { deposit: nearToYocto("0.00125") });
+  const route = [{ pool_id: 0, token_in: process.env.WRAP_NEAR_ID, token_out: usdc, amount_in: String(nearToYocto("20")), min_amount_out: "0" }];
+  await call(trader, process.env.WRAP_NEAR_ID, "ft_transfer_call", { receiver_id: process.env.RHEA_EXCHANGE_ID, amount: String(nearToYocto("20")), msg: JSON.stringify({ actions: route }) }, { deposit: 1n });
+  const [usdcBefore, wnearBefore] = [await usdcOf(daoId), BigInt(await view(process.env.WRAP_NEAR_ID, "ft_balance_of", { account_id: daoId }))];
+  for (const u of [1, 2, 3]) await run(u, `vote ${id} for`);
+  await advance(2.5);
+  await run(3, `execute ${id}`);
+  const core = (await view(daoId, "get_proposal", { id: (await view(link().orbitId, "get_proposal", { id })).core_proposal_id })).status;
+  assert.equal(await usdcOf(daoId), usdcBefore, "no USDC arrived");
+  const wnearAfter = BigInt(await view(process.env.WRAP_NEAR_ID, "ft_balance_of", { account_id: daoId }));
+  console.log(`  ✔ the swap reverted (core proposal ${core}); the treasury keeps its NEAR (as wNEAR: ${near(wnearAfter - wnearBefore)}) and its USDC`);
+
+  step("Treasury: liquid staking with LiNEAR");
+  await pass(await propose("liquidstake 2"));
+  const staked = BigInt(await view(linear, "get_account_staked_balance", { account_id: daoId }));
+  const shares = BigInt(await view(linear, "ft_balance_of", { account_id: daoId }));
+  assert.ok(staked >= nearToYocto("1.99"), `staked ${near(staked)}`);
+  console.log(`  ✔ the treasury staked ${near(staked)} and holds ${yoctoToNear(shares)} LiNEAR`);
+  await pass(await propose("liquidunstake 1"));
+  const position = { unstaked: BigInt(await view(linear, "get_account_unstaked_balance", { account_id: daoId })) };
+  assert.ok(position.unstaked >= nearToYocto("0.99"), `unstaking ${near(position.unstaked)}`);
+  await run(1, "liquidwithdraw", { expect: /still unstaking/ });
+  console.log(`  ✔ ${near(position.unstaked)} is unstaking; withdrawing is refused until it's ready`);
+  await run(2, "treasury", { expect: /USDC[\s\S]*Staked with LiNEAR[\s\S]*Unstaking from LiNEAR/ });
+}
+
+if (process.env.INTENTS_ID) {
+  // The NEAR Intents Verifier is real (scripts/sandbox-venues.js). Its 1Click
+  // API, which quotes and runs the solvers, isn't reachable from a sandbox, so
+  // its token list, quotes and status are stood in for here.
+  const intentsId = process.env.INTENTS_ID;
+  const wrapId = process.env.WRAP_NEAR_ID;
+  const realIntents = await import("../src/near/intents.js");
+  const depositAddress = (await import("node:crypto")).randomBytes(32).toString("hex");
+  const listed = [
+    { assetId: `nep141:${wrapId}`, symbol: "wNEAR", blockchain: "near", decimals: 24 },
+    { assetId: "nep141:btc.omft.near", symbol: "BTC", blockchain: "btc", decimals: 8 },
+  ];
+  services.intents = {
+    ...realIntents,
+    tokens: async () => listed,
+    nearAsset: async (id) => listed.find((t) => t.assetId === `nep141:${id === "NEAR" ? wrapId : id}`) ?? null,
+    findAsset: async (text) => listed.find((t) => t.symbol.toLowerCase() === String(text).toLowerCase()) ?? null,
+    quote: async (r) => ({ depositAddress, correlationId: "sandbox", amountIn: String(r.amount), amountOut: "150000", minAmountOut: "148500", deadline: new Date(r.deadline.getTime() + 60_000).toISOString() }),
+    status: async () => ({ status: "PENDING_DEPOSIT" }),
+  };
+
+  step("NEAR Intents: buy BTC with 1 NEAR; the proposal deposits into the quote's NEAR Intents account");
+  await operatorAccount().transfer({ receiverId: daoId, amount: nearToYocto("2") });
+  const id = await propose("buy 1 NEAR BTC");
+  await run(2, `intentsstatus ${id}`, { expect: /waiting for the deposit/ });
+  await pass(id);
+  const credited = BigInt(await view(intentsId, "mt_balance_of", { account_id: depositAddress, token_id: `nep141:${wrapId}` }));
+  assert.equal(credited, nearToYocto("1"));
+  console.log(`  ✔ the Verifier credited ${near(credited)} (as wNEAR) to the quote's account ${depositAddress.slice(0, 10)}…, where solvers fill it`);
+
+  step("NEAR Intents: a refund held in the DAO's Intents account comes back to the treasury by proposal");
+  // Stands in for a refund: 3 wNEAR credited to the DAO's own NEAR Intents account.
+  const operator = operatorAccount();
+  await call(operator, wrapId, "storage_deposit", { account_id: OPERATOR_ACCOUNT_ID, registration_only: true }, { deposit: nearToYocto("0.00125") });
+  await call(operator, wrapId, "near_deposit", {}, { deposit: nearToYocto("3") });
+  await call(operator, wrapId, "ft_transfer_call", { receiver_id: intentsId, amount: String(nearToYocto("3")), msg: daoId }, { deposit: 1n });
+  await run(1, "treasury", { expect: /In NEAR Intents: 3 wNEAR/ });
+  const wnear = async () => BigInt(await view(wrapId, "ft_balance_of", { account_id: daoId }));
+  const before = await wnear();
+  await pass(await propose("intentswithdraw 3 NEAR"));
+  assert.equal((await wnear()) - before, nearToYocto("3"));
+  assert.equal(BigInt(await view(intentsId, "mt_balance_of", { account_id: daoId, token_id: `nep141:${wrapId}` })), 0n);
+  console.log("  ✔ the DAO withdrew its 3 wNEAR from NEAR Intents to the treasury, through its own proposal (auth by caller)");
+}
+
+if (process.env.CHAIN_SIGNER_ID) {
+  // The signer is a stand-in with the real interface and key derivation
+  // (scripts/sandbox-venues.js). Base itself isn't reachable from a sandbox,
+  // so its nonce, fees, balances and the final send are stood in for; the
+  // signatures and the transactions they sign are real.
+  const realEvm = await import("../src/near/evm.js");
+  const { parseTransaction, recoverTransactionAddress, decodeFunctionData } = await import("viem");
+  const sent = [];
+  services.evm = {
+    ...realEvm,
+    txParams: async () => ({ nonce: 0, maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1_000_000n }),
+    balances: async () => ({ eth: 10n ** 16n, usdc: 20_000_000n, aUsdc: 0n }),
+    broadcast: async (chain, signed) => {
+      sent.push(signed);
+      return `0x${"0".repeat(63)}${sent.length}`;
+    },
+  };
+
+  step("Chain Signatures: the DAO has its own EVM address, derived by the signer from its account");
+  const address = await services.chainsig.evmAddress(daoId);
+  await run(2, "evm", { expect: new RegExp(address) });
+
+  step("Aave on Base: supply 5 USDC by proposal; executing signs and sends approve + supply");
+  await pass(await propose("aave supply 5"));
+  assert.equal(sent.length, 2, "approve, then supply");
+  const chain = realEvm.base();
+  const [approve, supply] = sent.map((raw) => parseTransaction(raw));
+  for (const raw of sent) assert.equal((await recoverTransactionAddress({ serializedTransaction: raw })).toLowerCase(), address.toLowerCase());
+  assert.equal(approve.to.toLowerCase(), chain.usdc.toLowerCase());
+  assert.equal(supply.to.toLowerCase(), chain.aavePool.toLowerCase());
+  assert.deepEqual([approve.nonce, supply.nonce, supply.chainId], [0, 1, chain.chainId]);
+  const AAVE = [{ type: "function", name: "supply", inputs: [{ name: "asset", type: "address" }, { name: "amount", type: "uint256" }, { name: "onBehalfOf", type: "address" }, { name: "referralCode", type: "uint16" }], outputs: [] }];
+  const { args } = decodeFunctionData({ abi: AAVE, data: supply.data });
+  assert.deepEqual([args[0].toLowerCase(), args[1], args[2].toLowerCase()], [chain.usdc.toLowerCase(), 5_000_000n, address.toLowerCase()]);
+  console.log(`  ✔ two transactions signed by the DAO's address ${address} through its proposal: approve, then supply 5 USDC to Aave on its behalf`);
+
+  step("Hyperliquid: appoint a trading agent by proposal; the DAO's key signs Hyperliquid's approveAgent");
+  // Hyperliquid's API isn't reachable from a sandbox: the post is stood in for, after the same signature check.
+  const realHl = await import("../src/near/hyperliquid.js");
+  const { recoverAddress } = await import("viem");
+  const accepted = [];
+  services.hyperliquid = {
+    ...realHl,
+    account: async () => ({ accountValue: "0", withdrawable: "0", positions: [] }),
+    submit: async (action, signature, from) => {
+      const signer = await recoverAddress({ hash: realHl.digest(action), signature });
+      if (signer.toLowerCase() !== from.toLowerCase()) throw new Error(`signed by ${signer}`);
+      accepted.push({ action, signer });
+      return { status: "ok" };
+    },
+  };
+  const agent = "0x1111111111111111111111111111111111111111";
+  await pass(await propose(`hlagent ${agent} desk`));
+  assert.equal(accepted.length, 1);
+  assert.deepEqual([accepted[0].action.type, accepted[0].action.agentAddress, accepted[0].action.agentName], ["approveAgent", agent, "desk"]);
+  assert.equal(accepted[0].signer.toLowerCase(), address.toLowerCase());
+  console.log(`  ✔ the DAO's address signed approveAgent for ${agent} ("desk"): it can trade for the DAO, never withdraw`);
+}
+
 step("Switch to conviction, which locks stake while it backs a proposal");
-await run(2, "switchmodel conviction", { expect: /#1\b/ });
-for (const u of [1, 2, 3]) await run(u, "vote 1 for");
+const convictionSwitch = Number(/\*#(\d+)\*/.exec((await run(2, "switchmodel conviction", { expect: /New proposal|#\d/ })).text)[1]);
+for (const u of [1, 2, 3]) await run(u, `vote ${convictionSwitch} for`);
 await advance(2.5);
-await run(1, "execute 1", { expect: /now runs conviction|executed/i });
+await run(1, `execute ${convictionSwitch}`, { expect: /now runs conviction|executed/i });
 assert.equal(await view(link().stakingId, "get_locker"), link().orbitId);
 console.log(`  ✔ the conviction orbit is the staking contract's locker`);
 await run(3, `pay 1 NEAR ${carol} conviction payout`, { expect: /#0\b/ });

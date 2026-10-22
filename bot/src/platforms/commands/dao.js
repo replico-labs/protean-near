@@ -1,3 +1,4 @@
+import { fromUnits } from "../../near/amounts.js";
 import { MODELS } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, parseId, formatNear, tokenInfo, formatDuration, formatTime, nowNs } from "../helpers.js";
@@ -58,6 +59,37 @@ const daoInfo = {
   },
 };
 
+/**
+ * What else the treasury holds: wrapped NEAR and known tokens (from swaps),
+ * and liquid staking positions. Only what it actually has; a venue that
+ * can't be read is skipped.
+ */
+async function otherHoldings(daoId) {
+  const tokenIds = [services.venues.wrapNear, ...Object.values(services.venues.tokens ?? {})].filter(Boolean);
+  await services.tokens.load(tokenIds);
+  const balances = await Promise.all(tokenIds.map((id) => services.staking.tokenBalance(id, daoId).catch(() => 0n)));
+  const lines = tokenIds.flatMap((id, i) => (balances[i] > 0n ? [services.tokens.format(id, balances[i])] : []));
+  // Held inside NEAR Intents (bought assets, refunds); mainnet only, and skipped if it can't be read.
+  const intents = await services.intents
+    .holdings(daoId)
+    .then(async (held) => {
+      const listed = held.length ? await services.intents.tokens() : [];
+      return held.map(([assetId, amount]) => {
+        const asset = listed.find((t) => t.assetId === assetId);
+        return asset ? `${fromUnits(amount, asset.decimals)} ${asset.symbol}${asset.blockchain === "near" ? "" : ` (${asset.blockchain})`}` : `${amount} of ${assetId}`;
+      });
+    })
+    .catch(() => []);
+  if (intents.length) lines.push(`In NEAR Intents: ${intents.join(", ")}`);
+  for (const [key] of services.lst.providers()) {
+    const lst = services.lst.provider(key);
+    const p = await services.lst.position(lst.id, daoId).catch(() => null);
+    if (p && p.staked > 0n) lines.push(`Staked with ${lst.label}: ${formatNear(p.staked)} NEAR`);
+    if (p && p.unstaked > 0n) lines.push(`Unstaking from ${lst.label}: ${formatNear(p.unstaked)} NEAR${p.available ? " (ready to withdraw)" : ""}`);
+  }
+  return lines;
+}
+
 const treasury = {
   section: "The DAO",
   needsDao: true,
@@ -67,8 +99,12 @@ const treasury = {
   async run(ctx) {
     const dao = requireDao(ctx);
     const token = await tokenInfo(dao);
-    const [near, tokens] = await Promise.all([services.core.treasuryNear(dao.daoId), services.staking.tokenBalance(token.id, dao.daoId)]);
-    return reply(`*Treasury of* \`${dao.daoId}\`\nNEAR: ${formatNear(near)}\n${token.symbol}: ${token.format(tokens)}`);
+    const [near, tokens, holdings] = await Promise.all([
+      services.core.treasuryNear(dao.daoId),
+      services.staking.tokenBalance(token.id, dao.daoId),
+      otherHoldings(dao.daoId),
+    ]);
+    return reply([`*Treasury of* \`${dao.daoId}\``, `NEAR: ${formatNear(near)}`, `${token.symbol}: ${token.format(tokens)}`, ...holdings].join("\n"));
   },
 };
 
@@ -82,7 +118,7 @@ const proposals = {
     const dao = requireDao(ctx);
     const { count, items } = await latestProposals(dao);
     if (!count) return reply(`No proposals yet. Make one with \`${ctx.cmd("pay")}\` or \`${ctx.cmd("signal")}\`.`);
-    const lines = items.map(([id, state, description]) => `#${id} *${state}* — ${description}`);
+    const lines = items.map(([id, state, description]) => `#${id} *${state}* — ${services.evm.readable(description)}`);
     return reply([`*Proposals* (latest ${items.length} of ${count})`, ...lines, "", `Details: \`${ctx.cmd("proposal")} <id>\``].join("\n"));
   },
 };

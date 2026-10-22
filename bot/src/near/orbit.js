@@ -1,5 +1,5 @@
 import { nearToYocto } from "near-api-js";
-import { view, call } from "./client.js";
+import { view, call, callWithOutcome } from "./client.js";
 
 /**
  * An orbit: a DAO's governance module, one Orbits module contract per
@@ -7,8 +7,17 @@ import { view, call } from "./client.js";
  * Views take the orbit's account; writes take the signing account first.
  */
 
-/** Covers a proposal's storage on the orbit; it refunds what's left. */
-const PROPOSAL_DEPOSIT = nearToYocto("0.01");
+/**
+ * Enough to cover a proposal's storage on the orbit, which refunds what's
+ * left: its text at NEAR's 10^19 yoctoNEAR per byte, plus room for the
+ * rest of the record. Proposals carrying EVM transactions are long.
+ */
+const BYTE_COST = 10n ** 19n;
+export const proposalDeposit = (description, kind) => {
+  const bytes = BigInt(Buffer.byteLength(description) + Buffer.byteLength(kind) + 1_000);
+  const deposit = bytes * BYTE_COST;
+  return deposit > nearToYocto("0.01") ? deposit : nearToYocto("0.01");
+};
 const ONE_YOCTO = 1n;
 
 // --- Views ---
@@ -42,7 +51,8 @@ export function modelOf(model) {
 
 /** Proposes `kind` (a Sputnik proposal kind object). Returns the new proposal id. */
 export function propose(account, orbitId, description, kind) {
-  return call(account, orbitId, "propose", { description, kind: JSON.stringify(kind) }, { deposit: PROPOSAL_DEPOSIT });
+  const text = JSON.stringify(kind);
+  return call(account, orbitId, "propose", { description, kind: text }, { deposit: proposalDeposit(description, text) });
 }
 
 /** "For", "Against" or "Abstain". Returns { counted, weight, state }. */
@@ -52,6 +62,8 @@ export function vote(account, orbitId, id, choice) {
 
 export const execute = (account, orbitId, id) => call(account, orbitId, "execute", { id: Number(id) });
 export const cancel = (account, orbitId, id) => call(account, orbitId, "cancel", { id: Number(id) });
+/** Executes, returning the whole outcome (for proposals whose results the bot reads, like signatures). */
+export const executeWithOutcome = (account, orbitId, id) => callWithOutcome(account, orbitId, "execute", { id: Number(id) });
 
 // --- Liquid ---
 
@@ -96,7 +108,8 @@ export const getPosition = (orbitId, id, accountId) => view(orbitId, "get_positi
 
 /** Proposes with success criteria (human-resolved by default). Returns the id. */
 export function proposeWithCriteria(account, orbitId, description, kind, measurementPeriod, criteria = "Human") {
-  return call(account, orbitId, "propose_with_criteria", { description, kind: JSON.stringify(kind), criteria, measurement_period: measurementPeriod }, { deposit: PROPOSAL_DEPOSIT });
+  const text = JSON.stringify(kind);
+  return call(account, orbitId, "propose_with_criteria", { description, kind: text, criteria, measurement_period: measurementPeriod }, { deposit: proposalDeposit(description, text) });
 }
 
 /** Sends `amount` of the DAO's token to the orbit with `msg` (a bond, a position, a seed...). */

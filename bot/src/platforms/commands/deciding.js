@@ -1,6 +1,7 @@
 import { services } from "../services.js";
 import { UserError, reply, requireDao, userAccount, parseId, parseAccountId, choiceOf, tokenInfo, explain } from "../helpers.js";
 import { loadProposal, describeProposal, followSwap } from "../proposals.js";
+import { relayEvm } from "./evm.js";
 
 const STAKE_VOTING = ["tokenWeighted", "quadratic", "liquid", "optimistic", "sowellian"];
 const COUNCILS = ["delegate", "sortition"];
@@ -37,12 +38,15 @@ const vote = {
     const account = await userAccount(ctx);
     if (dao.model === "board") {
       if (choice === "Abstain") throw new UserError("Board members approve or reject.");
-      await explain(() => services.core.actProposal(account, dao.daoId, id, choice === "For" ? "VoteApprove" : "VoteReject"), VOTE_ERRORS);
+      const evmTxs = services.evm.txsIn((await services.core.getCoreProposal(dao.daoId, id))?.description);
+      const act = evmTxs ? services.core.actProposalWithOutcome : services.core.actProposal;
+      const outcome = await explain(() => act(account, dao.daoId, id, choice === "For" ? "VoteApprove" : "VoteReject"), VOTE_ERRORS);
       const p = await services.core.getCoreProposal(dao.daoId, id);
       const passed = p.status === "Approved";
       const swapped = passed ? await followSwap(ctx, dao, p.kind, account) : "";
+      const relayed = passed && evmTxs ? await relayEvm(evmTxs, outcome) : "";
       const result = await show(ctx, dao, id, `🗳 Voted *${choice.toLowerCase()}* on #${id}.${passed ? " It passed and was executed." : ""}`);
-      return { ...result, text: result.text + swapped };
+      return { ...result, text: result.text + swapped + relayed };
     }
     const outcome = await explain(() => services.orbit.vote(account, dao.orbitId, id, choice), VOTE_ERRORS);
     if (!outcome.counted) {
@@ -66,8 +70,11 @@ const execute = {
     const dao = requireDao(ctx, this.models);
     const id = parseId(ctx.args[0], `${ctx.cmd("execute")} <id>`);
     const account = await userAccount(ctx);
-    if ((await services.orbit.getProposal(dao.orbitId, id))?.state === "Executed") throw new UserError(`#${id} was already executed.`);
-    await explain(() => services.orbit.execute(account, dao.orbitId, id), {
+    const before = await services.orbit.getProposal(dao.orbitId, id);
+    if (before?.state === "Executed") throw new UserError(`#${id} was already executed.`);
+    // A proposal with EVM transactions: keep the outcome, where the signatures are.
+    const evmTxs = services.evm.txsIn(before?.description);
+    const outcome = await explain(() => (evmTxs ? services.orbit.executeWithOutcome(account, dao.orbitId, id) : services.orbit.execute(account, dao.orbitId, id)), {
       ERR_TIMELOCK: "Its timelock isn't over yet; see when with the proposal's status.",
       ERR_PROPOSAL_NOT_PASSED: "That proposal hasn't passed.",
       ERR_EXECUTION_EXPIRED: "Its execution window has passed.",
@@ -76,8 +83,9 @@ const execute = {
     const p = await services.orbit.getProposal(dao.orbitId, id);
     if (p.state !== "Executed") return show(ctx, dao, id, `#${id} couldn't be executed on the DAO yet. Try again in a minute.`);
     const swapped = await followSwap(ctx, dao, p.kind, account);
+    const relayed = evmTxs ? await relayEvm(evmTxs, outcome) : "";
     const result = await show(ctx, dao, id, `▶️ #${id} was executed on the DAO.`);
-    return { ...result, text: result.text + swapped };
+    return { ...result, text: result.text + swapped + relayed };
   },
 };
 

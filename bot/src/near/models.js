@@ -167,6 +167,35 @@ export function boardPolicy(members) {
   };
 }
 
+/**
+ * The longest a proposal made now can take to become unexecutable under
+ * model `name` with `settings` (from the orbit), in nanoseconds: voting,
+ * timelock and the execution window. Null when there's no bound
+ * (conviction and decision markets wait on support or seeding). A board
+ * DAO's proposals last Sputnik's proposal period, `boardPeriod`.
+ */
+export function executionHorizonNs(name, settings, boardPeriod = 7n * 24n * 60n * MIN) {
+  const n = (v) => BigInt(v ?? 0);
+  const window = (r) => n(r.voting_delay) + n(r.voting_period) + n(r.timelock) + n(r.execution_period);
+  switch (name) {
+    case "board":
+      return BigInt(boardPeriod);
+    case "tokenWeighted":
+    case "quadratic":
+    case "liquid":
+      return window(settings);
+    case "optimistic":
+      return n(settings.challenge_period) + window({ ...settings.rules, voting_delay: 0 });
+    case "delegate":
+    case "sortition":
+      return window(settings.council);
+    case "sowellian":
+      return window(settings.approval) + n(settings.positions_window);
+    default:
+      return null;
+  }
+}
+
 /** The policy of a DAO governed by `orbitId`: the orbit is its only member. */
 export function orbitPolicy(orbitId) {
   return {

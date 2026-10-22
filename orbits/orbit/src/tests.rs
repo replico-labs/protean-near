@@ -195,6 +195,35 @@ fn execute_respects_timelock_and_window() {
     assert_eq!((view.state, view.core_proposal_id), (State::Executed, Some(4)));
 }
 
+/// All gas left after scheduling goes to the core's act_proposal, which runs
+/// the proposal's own calls (a swap needs 160 Tgas), and none to the orbit's
+/// small callback.
+#[test]
+fn approving_on_the_core_gives_it_the_leftover_gas() {
+    let (mut chain, mut o) = orbit(Model::TokenWeighted(rules()), None);
+    let id = propose(&chain, &mut o, "alice.testnet", TRANSFER);
+    chain.now += 2 * HOUR;
+    vote(&chain, &mut o, id, "alice.testnet", Choice::For, 50, 100);
+    chain.now += 26 * HOUR;
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    chain.callback(Some("4".into()));
+    let _ = o.on_added(id);
+    let weights: Vec<(String, String, u64)> = get_created_receipts()
+        .iter()
+        .flat_map(|r| {
+            r.actions.iter().filter_map(move |a| match a {
+                near_sdk::mock::MockAction::FunctionCallWeight { method_name, gas_weight, .. } => {
+                    Some((r.receiver_id.to_string(), String::from_utf8(method_name.clone()).unwrap(), gas_weight.0))
+                }
+                _ => None,
+            })
+        })
+        .collect();
+    assert!(weights.contains(&(DAO.to_string(), "act_proposal".into(), 1)), "{weights:?}");
+    assert!(weights.iter().any(|(_, m, w)| m == "on_approved" && *w == 0), "{weights:?}");
+}
+
 #[test]
 fn passed_but_unexecuted_expires() {
     let (mut chain, mut o) = orbit(Model::TokenWeighted(rules()), None);

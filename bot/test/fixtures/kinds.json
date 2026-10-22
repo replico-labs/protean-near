@@ -33,5 +33,121 @@
         "vote_policy": {}
       }
     }
+  },
+  "rheaSwapNear": {
+    "FunctionCall": {
+      "receiver_id": "wrap.testnet",
+      "actions": [
+        {
+          "method_name": "near_deposit",
+          "args": "e30=",
+          "deposit": "1000000000000000000000000",
+          "gas": "10000000000000"
+        },
+        {
+          "method_name": "ft_transfer_call",
+          "args": "eyJyZWNlaXZlcl9pZCI6InJlZi1maW5hbmNlLTEwMS50ZXN0bmV0IiwiYW1vdW50IjoiMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm1zZyI6IntcImFjdGlvbnNcIjpbe1wicG9vbF9pZFwiOjcsXCJ0b2tlbl9pblwiOlwid3JhcC50ZXN0bmV0XCIsXCJ0b2tlbl9vdXRcIjpcInVzZGMudGVzdG5ldFwiLFwiYW1vdW50X2luXCI6XCIxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwXCIsXCJtaW5fYW1vdW50X291dFwiOlwiNDk1MDAwMFwifV19In0=",
+          "deposit": "1",
+          "gas": "150000000000000"
+        }
+      ]
+    }
+  },
+  "rheaSwapToken": {
+    "FunctionCall": {
+      "receiver_id": "token.mydao.orbits.testnet",
+      "actions": [
+        {
+          "method_name": "ft_transfer_call",
+          "args": "eyJyZWNlaXZlcl9pZCI6InJlZi1maW5hbmNlLTEwMS50ZXN0bmV0IiwiYW1vdW50IjoiNTAwMDAwMDAwMDAwMDAwMDAwMDAwIiwibXNnIjoie1wiYWN0aW9uc1wiOlt7XCJwb29sX2lkXCI6MyxcInRva2VuX2luXCI6XCJ0b2tlbi5teWRhby5vcmJpdHMudGVzdG5ldFwiLFwidG9rZW5fb3V0XCI6XCJ3cmFwLnRlc3RuZXRcIixcImFtb3VudF9pblwiOlwiNTAwMDAwMDAwMDAwMDAwMDAwMDAwXCIsXCJtaW5fYW1vdW50X291dFwiOlwiMFwifSx7XCJwb29sX2lkXCI6NyxcInRva2VuX2luXCI6XCJ3cmFwLnRlc3RuZXRcIixcInRva2VuX291dFwiOlwidXNkYy50ZXN0bmV0XCIsXCJtaW5fYW1vdW50X291dFwiOlwiMTAwMDAwMFwifV19In0=",
+          "deposit": "1",
+          "gas": "150000000000000"
+        }
+      ]
+    }
+  },
+  "liquidStake": {
+    "FunctionCall": {
+      "receiver_id": "linear-protocol.testnet",
+      "actions": [
+        {
+          "method_name": "deposit_and_stake",
+          "args": "e30=",
+          "deposit": "5000000000000000000000000",
+          "gas": "50000000000000"
+        }
+      ]
+    }
+  },
+  "liquidUnstake": {
+    "FunctionCall": {
+      "receiver_id": "linear-protocol.testnet",
+      "actions": [
+        {
+          "method_name": "unstake",
+          "args": "eyJhbW91bnQiOiIyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0=",
+          "deposit": "0",
+          "gas": "75000000000000"
+        }
+      ]
+    }
+  },
+  "liquidWithdraw": {
+    "FunctionCall": {
+      "receiver_id": "meta-v2.pool.testnet",
+      "actions": [
+        {
+          "method_name": "withdraw_unstaked",
+          "args": "e30=",
+          "deposit": "0",
+          "gas": "75000000000000"
+        }
+      ]
+    }
+  },
+  "intentsDepositNear": {
+    "FunctionCall": {
+      "receiver_id": "wrap.near",
+      "actions": [
+        {
+          "method_name": "near_deposit",
+          "args": "e30=",
+          "deposit": "1000000000000000000000000",
+          "gas": "10000000000000"
+        },
+        {
+          "method_name": "ft_transfer_call",
+          "args": "eyJyZWNlaXZlcl9pZCI6ImludGVudHMubmVhciIsImFtb3VudCI6IjEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJtc2ciOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIn0=",
+          "deposit": "1",
+          "gas": "80000000000000"
+        }
+      ]
+    }
+  },
+  "intentsDepositToken": {
+    "FunctionCall": {
+      "receiver_id": "usdc.testnet",
+      "actions": [
+        {
+          "method_name": "ft_transfer_call",
+          "args": "eyJyZWNlaXZlcl9pZCI6ImludGVudHMubmVhciIsImFtb3VudCI6IjEwMjAwMDAiLCJtc2ciOiJkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkIn0=",
+          "deposit": "1",
+          "gas": "80000000000000"
+        }
+      ]
+    }
+  },
+  "intentsWithdraw": {
+    "FunctionCall": {
+      "receiver_id": "intents.near",
+      "actions": [
+        {
+          "method_name": "ft_withdraw",
+          "args": "eyJ0b2tlbiI6InVzZGMudGVzdG5ldCIsInJlY2VpdmVyX2lkIjoibXlkYW8uc3B1dG5pa3YyLnRlc3RuZXQiLCJhbW91bnQiOiIxMDAwMDAwIn0=",
+          "deposit": "1",
+          "gas": "60000000000000"
+        }
+      ]
+    }
   }
 }

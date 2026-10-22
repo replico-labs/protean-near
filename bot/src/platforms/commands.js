@@ -10,6 +10,10 @@ import { PROPOSING_COMMANDS } from "./commands/proposing.js";
 import { DECIDING_COMMANDS } from "./commands/deciding.js";
 import { COUNCIL_COMMANDS } from "./commands/council.js";
 import { MARKET_COMMANDS } from "./commands/markets.js";
+import { TREASURY_COMMANDS } from "./commands/treasury.js";
+import { INTENTS_COMMANDS } from "./commands/intents.js";
+import { EVM_COMMANDS } from "./commands/evm.js";
+import { HYPERLIQUID_COMMANDS } from "./commands/hyperliquid.js";
 
 /**
  * Platform-neutral commands for the Telegram and Discord front-ends.
@@ -30,7 +34,7 @@ import { MARKET_COMMANDS } from "./commands/markets.js";
  */
 
 // Help sections, in order, and the topic word for each.
-const SECTIONS = { Setup: "setup", "Your wallet": "wallet", "The DAO": "dao", Proposing: "proposing", Deciding: "deciding", Council: "council", Markets: "markets" };
+const SECTIONS = { Setup: "setup", "Your wallet": "wallet", "The DAO": "dao", Proposing: "proposing", Treasury: "treasury", Deciding: "deciding", Council: "council", Markets: "markets" };
 
 const help = {
   section: "Help",
@@ -62,6 +66,10 @@ export const COMMANDS = {
   ...WALLET_COMMANDS,
   ...DAO_COMMANDS,
   ...PROPOSING_COMMANDS,
+  ...TREASURY_COMMANDS,
+  ...INTENTS_COMMANDS,
+  ...EVM_COMMANDS,
+  ...HYPERLIQUID_COMMANDS,
   ...DECIDING_COMMANDS,
   ...COUNCIL_COMMANDS,
   ...MARKET_COMMANDS,

@@ -41,6 +41,25 @@ node --env-file=.env.sandbox scripts/publish-contracts.js --yes       # all elev
 node --env-file=.env.sandbox scripts/sandbox-flow.js
 ```
 
+To also try the treasury commands, install the venues before running the
+flow: Rhea's released exchange contract (from
+`github.com/marco-sundsk/ref-contracts`, `releases/ref_exchange_release.wasm`),
+wrapped NEAR and the NEAR Intents Verifier (`github.com/near/intents`,
+`releases/wnear.wasm` and `releases/defuse-0.2.10.wasm`), LiNEAR
+(`github.com/linear-protocol/LiNEAR`, built with Rust 1.69:
+`cargo build -p linear --target wasm32-unknown-unknown --release`) and
+`governance_token.wasm` from `orbits/target/near`, as a test USDC, and
+`mock_signer.wasm`, a stand-in for the Chain Signatures signer with the real
+interface and key derivation and one public test key (build
+`orbits/testing/mock-signer` with cargo near). Put the six files in one
+folder, then:
+
+```bash
+node scripts/sandbox-venues.js ~/.near-sandbox <that folder>
+```
+
+It opens a NEAR/USDC pool on Rhea with 1,000 NEAR and 5,000 USDC.
+
 The sandbox clock is moved forward instead of waiting for voting periods.
 Expect `All checks passed.` after these steps:
 
@@ -56,3 +75,13 @@ Expect `All checks passed.` after these steps:
 | Every module | All nine modules start on chain, each from its own published contract |
 | Wrong settings | The token-weighted module refuses quadratic settings, and no account is created |
 | Board DAO | Two of three members approve on Sputnik directly, and it pays out |
+| `/swap 1 NEAR USDC` (with venues) | The DAO sells 1 NEAR on Rhea and receives the quoted USDC |
+| `/swap 2 USDC NEAR 0.5%` | A token swap the other way, with a tighter minimum |
+| A swap whose minimum isn't met | Someone moves the price first; the swap reverts and the treasury keeps its funds (as wNEAR) |
+| `/liquidstake 2`, `/liquidunstake 1` | The DAO stakes with LiNEAR and holds LiNEAR; unstaking starts and an early withdraw is refused |
+| `/treasury` | Lists USDC, wNEAR, and what's staked and unstaking |
+| `/buy 1 NEAR BTC` | The proposal deposits 1 NEAR into the quote's account on the NEAR Intents Verifier. The 1Click API (quotes, solvers) can't run in a sandbox, so its answers are stood in for |
+| `/intentswithdraw 3 NEAR` | A refund held in the DAO's NEAR Intents account returns to the treasury by proposal |
+| `/evm` | The DAO's EVM address, derived from its account by the signer |
+| `/hlagent <address> desk` | The DAO's key signs Hyperliquid's approveAgent; the signature recovers to the DAO's address (the post to Hyperliquid's API is stood in for) |
+| `/aave supply 5` | Executing signs approve and supply; both recover to the DAO's address and supply 5 USDC to Aave on its behalf. Base itself can't be reached from a sandbox, so its nonce, fees, balances and the final send are stood in for |

@@ -2,13 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { toUnits, fromUnits } from "../src/near/amounts.js";
-import { describeKind } from "../src/near/kinds.js";
+import { describeKind, kindTokens, rheaSwap, liquidStake, intentsDeposit, intentsWithdraw } from "../src/near/kinds.js";
 import { proposalButtons, encodeButton, decodeButton } from "../src/buttons.js";
 import { parseCommandText, splitForTelegram, menuFor, syncChatMenu } from "../src/platforms/telegram.js";
 import { argsFromOptions, buildSlashCommands, toDiscordMarkdown } from "../src/platforms/discord.js";
 import { COMMANDS } from "../src/platforms/commands.js";
 import { kindFixtures, modelFixtures, policyFixtures } from "./kindFixtures.js";
-import { MODELS, MODULE_CONTRACT, ORBIT_PREFIX } from "../src/near/models.js";
+import { MODELS, MODULE_CONTRACT, ORBIT_PREFIX, executionHorizonNs, modelConfig } from "../src/near/models.js";
 
 test("amounts convert without floating point", () => {
   assert.equal(toUnits("1.5", 24), 1_500_000_000_000_000_000_000_000n);
@@ -112,4 +112,107 @@ test("Telegram's command menu follows the chat's model", async () => {
   console.error = () => {};
   await syncChatMenu(failing, -100, { model: "quadratic" });
   console.error = error;
+});
+
+test("swaps and liquid staking read as sentences", () => {
+  const swap = rheaSwap({
+    rhea: "ref.testnet",
+    wrapNear: "wrap.testnet",
+    tokenIn: "NEAR",
+    amountIn: 10n ** 24n,
+    route: [{ pool_id: 7, token_in: "wrap.testnet", token_out: "usdc.testnet", amount_in: String(10n ** 24n), min_amount_out: "4950000" }],
+  });
+  const formatNear = (y) => String(BigInt(y) / 10n ** 24n);
+  const formatToken = (id, amount) => `${Number(amount) / 1e6} USDC`;
+  assert.equal(describeKind(swap, { formatNear, formatToken }), "Swap 1 NEAR for at least 4.95 USDC on Rhea (ref.testnet)");
+  assert.deepEqual(kindTokens(swap), ["usdc.testnet"]);
+  assert.equal(describeKind(liquidStake("linear.testnet", 5n * 10n ** 24n), { formatNear }), "Liquid-stake 5 NEAR with linear.testnet");
+});
+
+test("NEAR Intents proposals read as sentences", () => {
+  const formatNear = (y) => String(BigInt(y) / 10n ** 24n);
+  const formatToken = (id, amount) => `${amount} ${id}`;
+  const deposit = intentsDeposit({ intents: "intents.near", wrapNear: "wrap.near", token: "NEAR", amount: 2n * 10n ** 24n, depositAddress: "b".repeat(64) });
+  assert.equal(describeKind(deposit, { formatNear, formatToken }), "Send 2 NEAR into NEAR Intents to fill quote bbbbbbbbbb…");
+  assert.deepEqual(kindTokens(deposit), []);
+  const withdraw = intentsWithdraw({ intents: "intents.near", token: "usdc.near", amount: 5n, receiver: "dao.near" });
+  assert.equal(describeKind(withdraw, { formatNear, formatToken }), "Withdraw 5 usdc.near from NEAR Intents to dao.near");
+});
+
+test("how long a proposal can stay executable, per model", () => {
+  const supply = 1_000_000n * 10n ** 18n;
+  const settings = (m) => Object.values(modelConfig(m, supply, 3))[0];
+  const tw = settings("tokenWeighted");
+  assert.equal(executionHorizonNs("tokenWeighted", tw), BigInt(tw.voting_delay) + BigInt(tw.voting_period) + BigInt(tw.timelock) + BigInt(tw.execution_period));
+  for (const m of ["quadratic", "liquid", "optimistic", "delegate", "sortition", "sowellian"]) assert.ok(executionHorizonNs(m, settings(m)) > 0n, m);
+  assert.equal(executionHorizonNs("conviction", settings("conviction")), null);
+  assert.equal(executionHorizonNs("decisionMarkets", settings("decisionMarkets")), null);
+  assert.equal(executionHorizonNs("board", null, 99n), 99n);
+});
+
+test("Chain Signatures: a signature in the signing network's format makes a transaction sent from the DAO's address", async () => {
+  process.env.CHAIN_SIGNER_ID = "signer.testnet";
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const { sign } = await import("viem/accounts");
+  const { signaturesFrom, signKind } = await import("../src/near/chainsig.js");
+  const evm = await import("../src/near/evm.js");
+  const key = "0x" + "11".repeat(32);
+  const dao = privateKeyToAccount(key).address;
+  const chain = evm.base();
+  const txs = evm.unsignedTxs(chain, evm.aaveSupplyCalls(chain, dao, 5_000_000n), { nonce: 7, maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1_000_000n });
+  assert.deepEqual(txs.map((t) => t.maxCost), [80_000n * 1_000_000_000n, 350_000n * 1_000_000_000n]);
+
+  // The proposal asks for one signature per transaction, in order.
+  const kind = signKind(txs.map((t) => t.hash));
+  const requests = kind.FunctionCall.actions.map((a) => JSON.parse(Buffer.from(a.args, "base64").toString()).request);
+  assert.deepEqual(requests.map((r) => r.payload_v2.Ecdsa), txs.map((t) => t.hash.slice(2)));
+  assert.ok(kind.FunctionCall.actions.every((a) => a.deposit === "1"));
+  assert.match(describeKind(kind), /^Sign 2 transactions with the DAO's own EVM key \(Chain Signatures, signer\.testnet\)/);
+
+  // The signing network answers each with { big_r (compressed R), s, recovery_id }, in the execution's receipts.
+  const answers = [];
+  for (const t of txs) {
+    const sig = await sign({ hash: t.hash, privateKey: key });
+    answers.push({ scheme: "Secp256k1", big_r: { affine_point: `0${2 + sig.yParity}${sig.r.slice(2)}`.toUpperCase() }, s: { scalar: sig.s.slice(2).toUpperCase() }, recovery_id: sig.yParity });
+  }
+  const outcome = {
+    receipts_outcome: [
+      { outcome: { executor_id: "orbit.testnet", status: { SuccessValue: "" } } },
+      ...answers.map((a) => ({ outcome: { executor_id: "signer.testnet", status: { SuccessValue: Buffer.from(JSON.stringify(a)).toString("base64") } } })),
+    ],
+  };
+  const signatures = signaturesFrom(outcome);
+  assert.equal(signatures.length, 2);
+  for (const [i, t] of txs.entries()) {
+    const signed = await evm.signedTx(t.serialized, signatures[i], dao);
+    assert.ok(signed.startsWith("0x02"));
+  }
+  // A signature from anyone else is refused.
+  await assert.rejects(evm.signedTx(txs[0].serialized, signatures[0], "0x000000000000000000000000000000000000dEaD"), /not the DAO's/);
+  delete process.env.CHAIN_SIGNER_ID;
+});
+
+test("a proposal's transactions travel in its description, hidden from what people read", async () => {
+  const evm = await import("../src/near/evm.js");
+  const text = evm.withTxs("Supply 5 USDC to Aave", { chain: 84532, from: "0xabc", txs: ["0x02f0"] });
+  assert.equal(evm.readable(text), "Supply 5 USDC to Aave");
+  assert.deepEqual(evm.txsIn(text), { chain: 84532, from: "0xabc", txs: ["0x02f0"] });
+  assert.equal(evm.txsIn("Pay Maya"), null);
+});
+
+test("Hyperliquid actions hash exactly as Hyperliquid's own SDK signs them", async () => {
+  const hl = await import("../src/near/hyperliquid.js");
+  const { sign } = await import("viem/accounts");
+  // The vector from hyperliquid-python-sdk tests/signing_test.py (test_sign_usd_transfer_action, testnet).
+  const action = { ...hl.usdSend("0x5e9ee1089755c3435139848e47e6635505d5a13a", "1", 1687816341423), hyperliquidChain: "Testnet" };
+  const sig = await sign({ hash: hl.digest(action), privateKey: "0x0123456789012345678901234567890123456789012345678901234567890123" });
+  assert.equal(sig.r, "0x637b37dd731507cdd24f46532ca8ba6eec616952c56218baeff04144e4a77073");
+  assert.equal(sig.s, "0x11a6a24900e6e314136d2592e2f8d502cd89b7c15b198e1bee043c9589f9fad7");
+  assert.equal(27 + sig.yParity, 27);
+
+  // Nonces: as late as Hyperliquid allows (just under a day ahead), accepted until about three days out.
+  const now = 1_700_000_000_000;
+  const { nonce, validUntil } = hl.nonceForProposal(now);
+  assert.equal(nonce, now + 23 * 3_600_000);
+  assert.equal(validUntil.getTime(), now + 23 * 3_600_000 + 47 * 3_600_000);
 });

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["orbit-common", "orbit", "modules/*", "orbit-staking", "governance-token", "core-tests"]
+members = ["orbit-common", "orbit", "modules/*", "orbit-staking", "governance-token", "core-tests", "testing/mock-signer"]
 
 [profile.release]
 codegen-units = 1

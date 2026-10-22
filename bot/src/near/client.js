@@ -1,4 +1,4 @@
-import { Account, JsonRpcProvider } from "near-api-js";
+import { Account, JsonRpcProvider, actions } from "near-api-js";
 import { RPC_URL, OPERATOR_ACCOUNT_ID, OPERATOR_PRIVATE_KEY, MAX_GAS } from "../config.js";
 
 /**
@@ -55,6 +55,22 @@ export async function call(account, contractId, methodName, args = {}, { deposit
   } catch (err) {
     throw new ChainError(err);
   }
+}
+
+/**
+ * Like `call`, but returns the transaction's whole outcome, every receipt it
+ * led to included: where results of calls the contract made can be read
+ * (Chain Signatures signatures, for one).
+ */
+export async function callWithOutcome(account, contractId, methodName, args = {}, { deposit = 0n, gas = MAX_GAS } = {}) {
+  let outcome;
+  try {
+    outcome = await account.signAndSendTransaction({ receiverId: contractId, actions: [actions.functionCall(methodName, args, gas, deposit)] });
+  } catch (err) {
+    throw new ChainError(err);
+  }
+  if (outcome.status?.Failure) throw new ChainError(new Error(JSON.stringify(outcome.status.Failure)));
+  return outcome;
 }
 
 /** A failed call, with the contract's error code (e.g. ERR_ALREADY_VOTED) when it panicked with one. */

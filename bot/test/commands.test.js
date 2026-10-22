@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { runCommand, COMMANDS } from "../src/platforms/commands.js";
 import { services } from "../src/platforms/services.js";
 import { ChainError } from "../src/near/client.js";
+import * as realEvm from "../src/near/evm.js";
+import * as realHyperliquid from "../src/near/hyperliquid.js";
 
 const DAO = "ark.sputnikv2.testnet";
 const BASE = "ark.orbits.testnet";
@@ -59,6 +61,8 @@ beforeEach(() => {
         return state.governing[dao];
       },
       treasuryNear: async () => 12n * 10n ** 24n,
+      getPolicy: async () => ({ proposal_period: "604800000000000" }),
+      availableNear: async () => 10n * 10n ** 24n,
       getCoreProposal: async (dao, id) => state.coreProposals[id] ?? null,
       getCoreProposals: async (dao, from, limit) => state.coreProposals.slice(from, from + limit),
       getLastProposalId: async () => state.coreProposals.length,
@@ -88,7 +92,89 @@ beforeEach(() => {
       },
       sendToken: record("sendToken"),
     },
+    venues: { wrapNear: "wrap.testnet" },
+    hyperliquid: {
+      ...realHyperliquid,
+      account: async () => ({ accountValue: "120", withdrawable: "50", positions: [{ coin: "ETH", size: "0.1", value: "350" }] }),
+      submit: async (action, sig) => {
+        if (sig.r !== "0x0a") throw new Error("not the DAO's");
+        calls.push(["hlSubmit", action]);
+        return { status: "ok" };
+      },
+    },
+    chainsig: {
+      evmAddress: async () => "0x00000000000000000000000000000000000000AA",
+      signKind: (hashes) => ({ FunctionCall: { receiver_id: "signer.testnet", actions: hashes.map((h) => ({ method_name: "sign", args: h, deposit: "1", gas: "50" })) } }),
+      signaturesFrom: () => state.signatures ?? [],
+    },
+    evm: {
+      ...realEvm,
+      base: () => ({ name: "Base Sepolia", chainId: 84532, usdc: "0x00000000000000000000000000000000000000c1", aUsdc: "0x00000000000000000000000000000000000000c2", aavePool: "0x00000000000000000000000000000000000000c3" }),
+      balances: async () => state.evmBalances ?? { eth: 10n ** 16n, usdc: 20_000_000n, aUsdc: 3_000_000n },
+      txParams: async () => ({ nonce: 3, maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1n }),
+      signedTx: async (serialized, sig) => {
+        // Stands in for recovery: signature i belongs to the transaction with nonce 3 + i.
+        if (realEvm.parseTx(serialized).nonce !== 3 + Number(BigInt(sig.r)) - 1) throw new Error("not the DAO's");
+        return `${serialized}:signed:${sig.r}`;
+      },
+      broadcast: async (chain, signed) => {
+        calls.push(["broadcast", signed]);
+        return "0xhash" + calls.filter((c) => c[0] === "broadcast").length;
+      },
+    },
+    intents: {
+      intentsId: () => "intents.near",
+      nearAsset: async (id) => ({ NEAR: { assetId: "nep141:wrap.testnet", symbol: "wNEAR", blockchain: "near", decimals: 24 }, "usdc.testnet": { assetId: "nep141:usdc.testnet", symbol: "USDC", blockchain: "near", decimals: 6 } })[id] ?? null,
+      findAsset: async (text) => {
+        const assets = { btc: { assetId: "nep141:btc.omft.near", symbol: "BTC", blockchain: "btc", decimals: 8 }, "usdc@sol": { assetId: "nep141:sol-usdc.omft.near", symbol: "USDC", blockchain: "sol", decimals: 6 } };
+        if (text.toLowerCase() === "usdc") throw new Error("USDC is on near, sol; pick one, e.g. USDC@near");
+        return assets[text.toLowerCase()] ?? null;
+      },
+      quote: async (request) => {
+        calls.push(["quote", request]);
+        const exact = request.exactOutput;
+        return {
+          depositAddress: "a".repeat(64),
+          correlationId: "corr-1",
+          amountIn: exact ? "1020000" : String(request.amount),
+          amountOut: exact ? String(request.amount) : "150000",
+          minAmountOut: exact ? String(request.amount) : "148500",
+          deadline: (state.quoteDeadline ?? new Date(request.deadline.getTime())).toISOString(),
+        };
+      },
+      prepareDao: async (dao, token, to) => calls.push(["intentsPrepare", token, to?.assetId ?? null]),
+      status: async () => ({ status: "SUCCESS" }),
+      balanceOf: async () => state.intentsBalance ?? 0n,
+      holdings: async () => [],
+    },
+    tokens: {
+      resolve: (text, daoToken) => ({ NEAR: "NEAR", USDC: "usdc.testnet", [daoToken.symbol]: daoToken.id })[text.toUpperCase()] ?? null,
+      info: async (id) => (id === "usdc.testnet" ? { symbol: "USDC", decimals: 6 } : { symbol: "ARK", decimals: 18 }),
+      load: async () => {},
+      format: (id, amount) => `${amount} ${id === "NEAR" ? "yoctoNEAR" : id}`,
+    },
+    rhea: {
+      exchangeId: () => "ref.testnet",
+      quote: async (from, to, amount) => {
+        calls.push(["quote", from, to, amount]);
+        if (to === TOKEN) return null;
+        return { hops: [{ pool_id: 7, token_in: "wrap.testnet", token_out: "usdc.testnet", out: 5_000_000n }], out: 5_000_000n };
+      },
+      withSlippage: (amount, bps) => (amount * BigInt(10_000 - bps)) / 10_000n,
+      routeActions: (hops, amountIn, minOut) => hops.map((h) => ({ pool_id: h.pool_id, token_in: h.token_in, token_out: h.token_out, amount_in: String(amountIn), min_amount_out: String(minOut) })),
+      prepareDao: async (dao, from, to) => calls.push(["prepareDao", dao, from, to]),
+    },
+    lst: {
+      provider: (key = "linear") => {
+        const ids = { linear: "linear.testnet", metapool: "metapool.testnet", nearx: "nearx.testnet" };
+        if (!ids[key]) throw new Error(`Liquid staking "${key}" isn't configured on this network`);
+        return { key, id: ids[key], label: { linear: "LiNEAR", metapool: "Meta Pool", nearx: "Stader (NearX)" }[key], withdrawMethod: key === "metapool" ? "withdraw_unstaked" : "withdraw_all" };
+      },
+      providers: () => [["linear", "linear.testnet"], ["metapool", "metapool.testnet"], ["nearx", "nearx.testnet"]],
+      position: async () => state.lstPosition ?? { staked: 3n * 10n ** 24n, unstaked: 0n, available: false },
+    },
     orbit: {
+      proposalDeposit: () => 10n ** 22n,
       modelOf: (m) => {
         const [name, settings] = Object.entries(m)[0];
         return { name: name[0].toLowerCase() + name.slice(1), settings };
@@ -112,6 +198,11 @@ beforeEach(() => {
         calls.push(["vote", id, choice]);
         if (state.noStake) return { counted: false, weight: "0", state: "Active" };
         return { counted: true, weight: "40", state: "Active" };
+      },
+      executeWithOutcome: async (acct, orbit, id) => {
+        calls.push(["executeWithOutcome", id]);
+        state.proposals[id].state = "Executed";
+        return { receipts_outcome: [] };
       },
       execute: async (acct, orbit, id) => {
         calls.push(["execute", id]);
@@ -326,4 +417,192 @@ test("decision markets: propose, seed, trade", async () => {
   assert.deepEqual(calls[3], ["trade", 0, "Pass", "Near", 5n * 10n ** 23n]);
   assert.match(traded.text, /for 7 ARK/);
   assert.match((await runCommand("trade", ctx(["0", "fail", "5", "NEAR"]))).text, /don't hold that many fail units/);
+});
+
+const decodeCall = (kind) => kind.FunctionCall.actions.map((a) => ({ ...a, args: JSON.parse(Buffer.from(a.args, "base64").toString()) }));
+
+test("swap proposes a Rhea swap with the minimum after slippage, registering the DAO first", async () => {
+  linked();
+  const r = await runCommand("swap", ctx(["1", "NEAR", "USDC"]));
+  assert.match(r.text, /New proposal/);
+  assert.deepEqual(calls.find((c) => c[0] === "prepareDao"), ["prepareDao", DAO, "NEAR", "usdc.testnet"]);
+  const [, , description, kind] = calls.find((c) => c[0] === "propose");
+  assert.match(description, /at least 4950000 usdc.testnet \(1% slippage\)/);
+  // NEAR is wrapped first, in the same proposal, then sent to Rhea with the route.
+  assert.equal(kind.FunctionCall.receiver_id, "wrap.testnet");
+  const [wrap, transfer] = decodeCall(kind);
+  assert.equal(wrap.method_name, "near_deposit");
+  assert.equal(wrap.deposit, String(10n ** 24n));
+  assert.equal(transfer.args.receiver_id, "ref.testnet");
+  assert.equal(JSON.parse(transfer.args.msg).actions[0].min_amount_out, "4950000");
+
+  // A token from the treasury goes straight to Rhea; slippage can be set.
+  calls = [];
+  await runCommand("swap", ctx(["10", "ARK", "USDC", "0.5%"]));
+  const tokenKind = calls.find((c) => c[0] === "propose")[3];
+  assert.equal(tokenKind.FunctionCall.receiver_id, TOKEN);
+  assert.equal(JSON.parse(decodeCall(tokenKind)[0].args.msg).actions[0].min_amount_out, "4975000");
+});
+
+test("swap refuses what the treasury can't cover, unknown tokens and pairs without liquidity", async () => {
+  linked();
+  assert.match((await runCommand("swap", ctx(["11", "NEAR", "USDC"]))).text, /treasury has/);
+  assert.match((await runCommand("swap", ctx(["1", "NEAR", "DOGE"]))).text, /isn't a token I know/);
+  assert.match((await runCommand("swap", ctx(["1", "NEAR", "ARK"]))).text, /no liquidity/);
+  assert.match((await runCommand("swap", ctx(["1", "NEAR", "USDC", "90"]))).text, /Slippage/);
+  assert.ok(!calls.some((c) => c[0] === "propose" || c[0] === "prepareDao"));
+});
+
+test("liquid staking: stake, unstake and withdraw by proposal", async () => {
+  linked();
+  await runCommand("liquidstake", ctx(["2"]));
+  let kind = calls.find((c) => c[0] === "propose")[3];
+  assert.equal(kind.FunctionCall.receiver_id, "linear.testnet");
+  assert.deepEqual([kind.FunctionCall.actions[0].method_name, kind.FunctionCall.actions[0].deposit], ["deposit_and_stake", String(2n * 10n ** 24n)]);
+  assert.match((await runCommand("liquidstake", ctx(["11"]))).text, /available, less than/);
+  assert.match((await runCommand("liquidstake", ctx(["1", "lido"]))).text, /Choose linear or metapool or nearx/);
+  calls = [];
+  await runCommand("liquidstake", ctx(["1", "nearx"]));
+  assert.equal(calls.find((c) => c[0] === "propose")[3].FunctionCall.receiver_id, "nearx.testnet");
+
+  calls = [];
+  await runCommand("liquidunstake", ctx(["1", "metapool"]));
+  kind = calls.find((c) => c[0] === "propose")[3];
+  assert.deepEqual([kind.FunctionCall.receiver_id, decodeCall(kind)[0].method_name, decodeCall(kind)[0].args.amount], ["metapool.testnet", "unstake", String(10n ** 24n)]);
+  assert.match((await runCommand("liquidunstake", ctx(["4"]))).text, /has 3 NEAR staked/);
+
+  assert.match((await runCommand("liquidwithdraw", ctx([]))).text, /Nothing is unstaking/);
+  state.lstPosition = { staked: 0n, unstaked: 10n ** 24n, available: false };
+  assert.match((await runCommand("liquidwithdraw", ctx([]))).text, /still unstaking/);
+  state.lstPosition.available = true;
+  calls = [];
+  await runCommand("liquidwithdraw", ctx(["metapool"]));
+  assert.equal(decodeCall(calls.find((c) => c[0] === "propose")[3])[0].method_name, "withdraw_unstaked");
+});
+
+test("buy funds a NEAR Intents quote that outlives the proposal; bought assets stay in the DAO's Intents account", async () => {
+  linked();
+  const r = await runCommand("buy", ctx(["1", "NEAR", "BTC"]));
+  assert.match(r.text, /New proposal/);
+  const [, request] = calls.find((c) => c[0] === "quote");
+  assert.deepEqual([request.from.assetId, request.to.assetId, request.amount, request.recipient, request.recipientType, request.exactOutput ?? false], ["nep141:wrap.testnet", "nep141:btc.omft.near", 10n ** 24n, DAO, "INTENTS", false]);
+  // Token-weighted settings here: voting 1h + timelock 1min + window "1" ns; the deadline asks for an hour more than that.
+  const horizon = 3_600_000_000_000n + 60_000_000_000n + 1n;
+  assert.ok(BigInt(request.deadline.getTime()) * 1_000_000n >= BigInt(Date.now()) * 1_000_000n + horizon);
+  const [, , description, kind] = calls.find((c) => c[0] === "propose");
+  assert.match(description, /^Buy at least 0\.001485 BTC on btc \(quoted 0\.0015 BTC on btc\) with 1 NEAR, held in the DAO's NEAR Intents account via NEAR Intents\. Quote corr-1/);
+  assert.equal(kind.FunctionCall.receiver_id, "wrap.testnet");
+  const [wrap, deposit] = decodeCall(kind);
+  assert.equal(wrap.method_name, "near_deposit");
+  assert.deepEqual([deposit.args.receiver_id, deposit.args.msg, deposit.args.amount], ["intents.near", "a".repeat(64), String(10n ** 24n)]);
+  assert.deepEqual(calls.find((c) => c[0] === "intentsPrepare"), ["intentsPrepare", "NEAR", "nep141:btc.omft.near"]);
+});
+
+test("buy refuses a quote that would expire before the proposal can execute, and models without a fixed end", async () => {
+  linked();
+  assert.match((await runCommand("buy", ctx(["1", "NEAR", "USDC"]))).text, /pick one, e\.g\. USDC@near/);
+  assert.match((await runCommand("buy", ctx(["20", "NEAR", "BTC"]))).text, /the treasury has/);
+  state.quoteDeadline = new Date(Date.now() + 60_000);
+  assert.match((await runCommand("buy", ctx(["1", "NEAR", "BTC"]))).text, /before this proposal could still execute/);
+  linked("conviction");
+  assert.match((await runCommand("buy", ctx(["1", "NEAR", "BTC"]))).text, /no fixed end/);
+  assert.ok(!calls.some((c) => c[0] === "propose"));
+});
+
+test("paychain pays an exact amount on another chain, from the same token if the treasury holds it", async () => {
+  linked();
+  await runCommand("paychain", ctx(["1", "USDC@sol", "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", "March", "design", "work"]));
+  const [, request] = calls.find((c) => c[0] === "quote");
+  assert.deepEqual([request.from.assetId, request.amount, request.exactOutput, request.recipient, request.recipientType], ["nep141:usdc.testnet", 1_000_000n, true, "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", "DESTINATION_CHAIN"]);
+  const [, , description, kind] = calls.find((c) => c[0] === "propose");
+  assert.match(description, /^March design work: pay 1 USDC on sol to 9xQe.*using up to 1\.02 USDC/);
+  // USDC goes straight into Intents: no wrapping.
+  assert.equal(kind.FunctionCall.receiver_id, "usdc.testnet");
+  assert.equal(decodeCall(kind)[0].args.amount, "1020000");
+});
+
+test("intentswithdraw brings refunds back to the treasury", async () => {
+  linked();
+  assert.match((await runCommand("intentswithdraw", ctx(["1", "USDC"]))).text, /account has 0 USDC/);
+  state.intentsBalance = 5_000_000n;
+  await runCommand("intentswithdraw", ctx(["1", "USDC"]));
+  const kind = calls.find((c) => c[0] === "propose")[3];
+  assert.equal(kind.FunctionCall.receiver_id, "intents.near");
+  assert.deepEqual(decodeCall(kind)[0].args, { token: "usdc.testnet", receiver_id: DAO, amount: "1000000" });
+});
+
+test("aave supply proposes signing approve + supply from the DAO's EVM address; executing sends them", async () => {
+  linked();
+  const r = await runCommand("aave", ctx(["supply", "5"]));
+  assert.match(r.text, /New proposal/);
+  const [, , description, kind] = calls.find((c) => c[0] === "propose");
+  assert.equal(kind.FunctionCall.receiver_id, "signer.testnet");
+  assert.equal(kind.FunctionCall.actions.length, 2, "approve, then supply");
+  const payload = realEvm.txsIn(description);
+  assert.deepEqual([payload.chain, payload.from, payload.txs.length], [84532, "0x00000000000000000000000000000000000000AA", 2]);
+  assert.match(realEvm.readable(description), /^Supply 5 USDC to Aave \(on Base Sepolia, from the DAO's address 0x0+AA\)$/);
+  // What the chat shows leaves the raw transactions out.
+  assert.ok(!r.text.includes("evm:"));
+
+  state.proposals[0].state = "Succeeded";
+  // They arrive in the other order; each still goes with its own transaction.
+  state.signatures = [{ r: "0x02", s: "0x04", yParity: 1 }, { r: "0x01", s: "0x02", yParity: 0 }];
+  const executed = await runCommand("execute", ctx(["0"]));
+  assert.ok(calls.some((c) => c[0] === "executeWithOutcome"));
+  assert.deepEqual(calls.filter((c) => c[0] === "broadcast").map((c) => c[1].split(":signed:")[1]), ["0x01", "0x02"]);
+  assert.match(executed.text, /Sent on Base Sepolia: `0xhash1`[\s\S]*Sent on Base Sepolia: `0xhash2`/);
+});
+
+test("aave refuses without gas or funds, a second open EVM proposal, and bad input", async () => {
+  linked();
+  state.evmBalances = { eth: 0n, usdc: 20_000_000n, aUsdc: 0n };
+  assert.match((await runCommand("aave", ctx(["supply", "5"]))).text, /needs up to .* ETH for gas[\s\S]*paychain 0.002 ETH@base dao/);
+  state.evmBalances = { eth: 10n ** 16n, usdc: 1_000_000n, aUsdc: 0n };
+  assert.match((await runCommand("aave", ctx(["supply", "5"]))).text, /has 1 USDC/);
+  assert.match((await runCommand("aave", ctx(["withdraw", "all"]))).text, /no USDC on Aave/);
+  assert.match((await runCommand("aave", ctx(["borrow", "5"]))).text, /Usage/);
+  state.evmBalances = undefined;
+  await runCommand("aave", ctx(["withdraw", "all"]));
+  assert.match((await runCommand("aave", ctx(["withdraw", "1"]))).text, /still open/);
+});
+
+test("paychain can pay the DAO's own EVM address", async () => {
+  linked();
+  await runCommand("paychain", ctx(["1", "USDC@sol", "dao", "x"]));
+  assert.ok(!calls.some((c) => c[0] === "quote"), "Solana isn't an EVM chain");
+});
+
+test("hlagent proposes an agent that can trade, not withdraw; executing posts it to Hyperliquid", async () => {
+  linked();
+  const agent = "0x1111111111111111111111111111111111111111";
+  const r = await runCommand("hlagent", ctx([agent]));
+  assert.match(r.text, /New proposal/);
+  const [, , description, kind] = calls.find((c) => c[0] === "propose");
+  const payload = realEvm.txsIn(description);
+  assert.equal(payload.hyperliquid, true);
+  const [action] = payload.actions;
+  assert.deepEqual([action.type, action.agentAddress, action.agentName, action.signatureChainId], ["approveAgent", agent, "protean", "0x66eee"]);
+  // The DAO's key is asked to sign exactly this action's digest.
+  assert.equal(kind.FunctionCall.actions[0].args, realHyperliquid.digest(action));
+  assert.match(realEvm.readable(description), /can place and cancel orders, but not withdraw .*Execute by/);
+
+  state.proposals[0].state = "Succeeded";
+  state.signatures = [{ r: "0x09", s: "0x01", yParity: 0 }, { r: "0x0a", s: "0x01", yParity: 0 }];
+  const executed = await runCommand("execute", ctx(["0"]));
+  assert.deepEqual(calls.find((c) => c[0] === "hlSubmit")[1], action);
+  assert.match(executed.text, /Hyperliquid accepted the agent 0x1{40}/);
+});
+
+test("hlrevoke replaces the agent with an address nobody holds; hlsend checks what's withdrawable", async () => {
+  linked();
+  await runCommand("hlrevoke", ctx([]));
+  const [action] = realEvm.txsIn(calls.find((c) => c[0] === "propose")[2]).actions;
+  assert.equal(action.agentName, "protean");
+  assert.match(action.agentAddress, /^0x[0-9a-fA-F]{40}$/);
+  assert.match((await runCommand("hlsend", ctx(["60", "0x2222222222222222222222222222222222222222"]))).text, /50 USDC withdrawable/);
+  assert.match((await runCommand("hlagent", ctx(["bob.near"]))).text, /isn't an EVM address/);
+  calls = [];
+  await runCommand("hlsend", ctx(["12.50", "0x2222222222222222222222222222222222222222"]));
+  assert.equal(realEvm.txsIn(calls.find((c) => c[0] === "propose")[2]).actions[0].amount, "12.5");
+  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Value: \$120 · Withdrawable: 50 USDC[\s\S]*ETH: 0\.1/);
 });

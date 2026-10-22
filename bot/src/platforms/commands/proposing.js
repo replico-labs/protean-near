@@ -9,6 +9,8 @@ import { loadProposal, describeProposal } from "../proposals.js";
 export async function makeProposal(ctx, dao, description, kind) {
   if (!description) throw new UserError("Add a description after the details, so people know what it's for.");
   const account = await userAccount(ctx);
+  // The orbit holds a refundable deposit for the proposal's storage; long proposals need more than gas money.
+  if (dao.model !== "board") await services.wallets.ensureGas(account.accountId, services.orbit.proposalDeposit(description, JSON.stringify(kind)));
   const token = await tokenInfo(dao);
   if (dao.model === "sowellian") return proposeSowellian(ctx, dao, account, token, description, kind);
   const id = await explain(

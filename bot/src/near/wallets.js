@@ -47,13 +47,15 @@ export async function getOrCreateUserAccount(platform, platformUserId) {
 }
 
 /**
- * Tops `accountId` back up to NEW_ACCOUNT_NEAR from the operator when its
- * spendable balance is below MIN_ACCOUNT_NEAR, so it can pay gas. The
- * operator pays gas and storage only, never the amounts users send.
+ * Tops `accountId` back up from the operator when its spendable balance is
+ * below MIN_ACCOUNT_NEAR plus `deposit` (a refundable storage deposit it's
+ * about to attach), so it can pay gas. The operator pays gas and storage
+ * only, never the amounts users send.
  */
-export async function ensureGas(accountId) {
+export async function ensureGas(accountId, deposit = 0n) {
   const available = await availableBalance(accountId);
-  const min = nearToYocto(MIN_ACCOUNT_NEAR);
+  const min = nearToYocto(MIN_ACCOUNT_NEAR) + deposit;
   if (available >= min) return;
-  await operatorAccount().transfer({ receiverId: accountId, amount: nearToYocto(NEW_ACCOUNT_NEAR) - available });
+  const target = nearToYocto(NEW_ACCOUNT_NEAR) + deposit;
+  await operatorAccount().transfer({ receiverId: accountId, amount: target - available });
 }

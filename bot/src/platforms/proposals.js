@@ -1,4 +1,5 @@
-import { describeKind } from "../near/kinds.js";
+import { describeKind, kindTokens } from "../near/kinds.js";
+import { readable } from "../near/evm.js";
 import { proposalButtons } from "../buttons.js";
 import { services } from "./services.js";
 import { formatNear, formatTime, nowNs } from "./helpers.js";
@@ -21,11 +22,13 @@ export async function loadProposal(link, id, token) {
     if (!p) return null;
     const counts = p.vote_counts?.governance ?? ["0", "0", "0"];
     const lines = [`Status: *${p.status}*`, `Approve ${counts[0]} · Reject ${counts[1]}`];
+    await services.tokens.load(kindTokens(p.kind));
     return { id, description: p.description, kind: p.kind, state: p.status, lines, buttons: proposalButtons("board", id, p.status) };
   }
   const p = await services.orbit.getProposal(link.orbitId, id);
   if (!p) return null;
   const fmt = token.format;
+  await services.tokens.load(kindTokens(p.kind));
   const lines = [`Status: *${p.state}*${p.sending ? " (executing...)" : ""}`];
   if (link.model === "conviction") {
     lines.push(`Conviction ${fmt(p.conviction)} of ${fmt(p.required_conviction)} needed · backed by ${fmt(p.support)}`);
@@ -79,9 +82,9 @@ async function exchangeLines(link, id, fmt) {
 export function describeProposal(p, token) {
   const action = describeKind(p.kind, {
     formatNear,
-    formatToken: (id, amount) => (id === token.id ? token.format(amount) : `${amount} of ${id}`),
+    formatToken: (id, amount) => (id === token.id ? token.format(amount) : services.tokens.format(id, amount)),
   });
-  return [`*#${p.id}* — ${p.description}`, `Action: ${action}`, ...p.lines].join("\n");
+  return [`*#${p.id}* — ${readable(p.description)}`, `Action: ${action}`, ...p.lines].join("\n");
 }
 
 /** The latest `limit` proposals, newest first, as [id, state, description]. */

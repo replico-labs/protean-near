@@ -13,6 +13,7 @@ const TOPICS = {
   tokens: "🪙 Tokens",
   dao: "🏛 The DAO",
   proposing: "📝 Proposing",
+  treasury: "💰 Treasury",
   deciding: "🗳 Deciding",
   proposals: "🗳 Proposals",
   council: "👥 Council",

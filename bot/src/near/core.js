@@ -1,4 +1,4 @@
-import { provider, view, call } from "./client.js";
+import { provider, view, call, callWithOutcome, availableBalance } from "./client.js";
 
 /**
  * A chat's core: an unmodified Sputnik DAO. With an orbit, only the orbit
@@ -25,6 +25,11 @@ export async function treasuryNear(daoId) {
   return BigInt(account.amount);
 }
 
+/** The treasury's spendable NEAR: its balance less what its storage locks. */
+export async function availableNear(daoId) {
+  return availableBalance(daoId);
+}
+
 // --- Board: members act on the core directly ---
 
 /** Adds a proposal to the core, with the policy's bond. Returns its id. */
@@ -37,4 +42,10 @@ export async function addProposal(account, daoId, description, kind) {
 export async function actProposal(account, daoId, id, action) {
   const proposal = await getCoreProposal(daoId, id);
   return call(account, daoId, "act_proposal", { id: Number(id), action, proposal: proposal.kind });
+}
+
+/** Like actProposal, returning the whole outcome: an approval that executes the proposal includes its results. */
+export async function actProposalWithOutcome(account, daoId, id, action) {
+  const proposal = await getCoreProposal(daoId, id);
+  return callWithOutcome(account, daoId, "act_proposal", { id: Number(id), action, proposal: proposal.kind });
 }
