@@ -55,6 +55,10 @@ stop the node, delete `.sandbox/home` and `bot/.env.sandbox`, and repeat
 from step 2. Without `sandbox-venues.js`, the flow skips the treasury steps.
 
 The sandbox clock is moved forward instead of waiting for voting periods.
+If you stop the node and start it again, start fresh as above: the runs
+move the node's clock hours ahead, a restarted node forgets the jump, and
+its clock barely moves until real time catches up (proposals then never
+leave voting).
 Expect `All checks passed.` after these steps:
 
 | Step | Checked |

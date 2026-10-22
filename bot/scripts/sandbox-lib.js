@@ -71,13 +71,27 @@ export async function rpc(method, params) {
   return body.result;
 }
 
+const height = async (finality) => (await rpc("block", { finality })).header.height;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Blocks per fast-forward call. The node answers only once it has made them
+// all, and a long jump on a slower machine outlasts fetch's 5-minute wait.
+const FAST_FORWARD_STEP = 300;
+
 /** Moves the sandbox's clock forward about `minutes`. */
 export async function advance(minutes) {
-  await rpc("sandbox_fast_forward", { delta_height: Math.ceil(minutes * 60) });
+  const target = (await height("optimistic")) + Math.ceil(minutes * 60);
+  for (let h = await height("optimistic"); h < target; h = await height("optimistic")) {
+    try {
+      await rpc("sandbox_fast_forward", { delta_height: Math.min(target - h, FAST_FORWARD_STEP) });
+    } catch (err) {
+      // The node keeps fast-forwarding after the request gives up; wait for it.
+      if (!/fetch failed|timeout/i.test(`${err.message} ${err.cause?.code ?? ""}`)) throw err;
+      await sleep(5000);
+    }
+  }
   // Transactions reference a final block; wait until finality catches up with the jump.
-  const height = async (finality) => (await rpc("block", { finality })).header.height;
-  const target = await height("optimistic");
-  while ((await height("final")) < target) await new Promise((r) => setTimeout(r, 300));
+  const top = await height("optimistic");
+  while ((await height("final")) < top) await sleep(300);
   console.log(`  ⏩ ${minutes} minute(s) later`);
 }
 
