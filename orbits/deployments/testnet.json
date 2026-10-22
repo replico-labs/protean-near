@@ -1,0 +1,60 @@
+{
+  "network": "testnet",
+  "contracts": {
+    "orbit_token_weighted": {
+      "codeHash": "2y2w94Kk4QpkgxBTM59Doji4sh9uzfqKSb7kPU8J8zcf",
+      "codeHashHex": "1d3665fb9a7a49644031dfef4007d4f6cb138294c155d81512e653c650822860",
+      "size": 232389
+    },
+    "orbit_quadratic": {
+      "codeHash": "8YGXDXMxooQo4MY8gvEB9zLMQ13uVjCNaBFVG8Hk3P4D",
+      "codeHashHex": "70045cf91908b072fe7043aebe8734a51e8e4160f17ea7e96367ec5688801312",
+      "size": 232390
+    },
+    "orbit_liquid": {
+      "codeHash": "K2x1JannFBEN6H5vrqXPpn2rWXNt3bQFPXYwRN1xTmH",
+      "codeHashHex": "049ea857ac4d81b3fc519b503042e536ac437b0ef830eee26c199ecf35eed468",
+      "size": 243573
+    },
+    "orbit_optimistic": {
+      "codeHash": "8U1h1FjJf8q4WynEssacvjyK3dfJmxeZfBWRfR4jJpzQ",
+      "codeHashHex": "6eed452c82f02e1198915feb2892b7e865fc9499c9265eb36c8e6416e7861fc5",
+      "size": 235333
+    },
+    "orbit_conviction": {
+      "codeHash": "BZgs5oFbEN8T4ZRwVJ2chamVuznitABm8ZFgB6kbAdX6",
+      "codeHashHex": "9cf487695daecb5affd304bafd073de4b3e647af5cb0c4b5aa56e79cd3dc9c89",
+      "size": 236478
+    },
+    "orbit_delegate": {
+      "codeHash": "HPvSUiDXZsDcBE511oR5xBzW3rm9TWtf8pgsGMPbjFsS",
+      "codeHashHex": "f39a314e250c7eb08f0cea0c2d9cfab5398c7450752e7dd7b1068eaf7d351c55",
+      "size": 275017
+    },
+    "orbit_sortition": {
+      "codeHash": "8CrjonQBLYSXVhpp2g8KSAAiyDaTWDn3ENUDMd7jdKGx",
+      "codeHashHex": "6b0b6fb60018c1445f66f20776b65e7e952fb615c592309f3e2f2d383eaf1d25",
+      "size": 239026
+    },
+    "orbit_sowellian": {
+      "codeHash": "DeoBfxibLsvt2ssMGV28N65Ncq7ax182q9xKoUp79fv1",
+      "codeHashHex": "bbfaf41617feb155fb79f36ca9b580b708afbc31e07a0f59549a5745b7587b1a",
+      "size": 278345
+    },
+    "orbit_decision_markets": {
+      "codeHash": "rULMrsgwYJ9j1aB72sqijnF8eLRcmpz94kMGx7U1sxJ",
+      "codeHashHex": "0cac5db5ddd441e48fea5917c1292c8b39cc6488a58138952cc682a71ad9033f",
+      "size": 255176
+    },
+    "orbit_staking": {
+      "codeHash": "5VuyqRFFsrwbMByjVR9CVNCwPqdAKdZHu4mZoJuhhxcj",
+      "codeHashHex": "42d6ea392dfe8dacdf1567c47d7277a2105c757490d350e81b5fbccc7dcb3154",
+      "size": 186299
+    },
+    "governance_token": {
+      "codeHash": "E7sPCuzLdZhno4Y1mEKXnwHeGXcVX3mzScCcy8LAdUBV",
+      "codeHashHex": "c2ea620a456d48b1c8f88ba3b298a19c2ff97355ce1cf7cc769c27fda73b1ffc",
+      "size": 156328
+    }
+  }
+}
