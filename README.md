@@ -122,6 +122,12 @@ node scripts/publish-contracts.js        # shows the cost
 node scripts/publish-contracts.js --yes  # publishes all
 node scripts/publish-contracts.js tokenWeighted quadratic --yes  # or only some models
 
+# Protean's own Sputnik factory (Sputnik's code, unmodified, shared as a global
+# contract): a DAO then costs ~0.6 NEAR instead of ~6.6 with sputnikv2.testnet
+./scripts/build-sputnik.sh
+node scripts/deploy-factory.js           # shows the cost (~49 NEAR, once)
+node scripts/deploy-factory.js --yes     # then set SPUTNIK_FACTORY_ID and DAO_CREATE_DEPOSIT=0.1
+
 npm run telegram     # or: npm run discord
 ```
 

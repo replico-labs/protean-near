@@ -15,7 +15,6 @@ WORK="$ROOT/.sandbox"
 WASM="$WORK/wasm"
 SRC="$WORK/src"
 SANDBOX_VERSION="2.13.0"
-SPUTNIK_REV="5434a59dec23ee0c49df8c8c4350c208a7e75b0b"
 mkdir -p "$WASM" "$SRC" "$WORK/bin"
 
 step() { printf '\n== %s\n' "$1"; }
@@ -58,16 +57,7 @@ fi
 echo "near-sandbox $SANDBOX_VERSION ($PLATFORM)"
 
 step "Sputnik DAO (the factory and the DAO contract), at the revision Orbits is tested against"
-if ! have sputnikdao2.wasm || ! have sputnikdao_factory2.wasm; then
-  [ -d "$SRC/sputnik/.git" ] || git clone -q https://github.com/near-daos/sputnik-dao-contract "$SRC/sputnik"
-  git -C "$SRC/sputnik" checkout -q "$SPUTNIK_REV"
-  rm -f "$SRC/sputnik/rust-toolchain.toml"
-  # The same near-sdk as Orbits, so it builds with today's Rust for NEAR's current protocol.
-  (cd "$SRC/sputnik" && cargo update -q -p near-sdk -p near-contract-standards --precise 5.29.1)
-  for c in sputnikdao2 sputnikdao-factory2; do (cd "$SRC/sputnik/$c" && cargo near build non-reproducible-wasm); done
-  cp "$SRC"/sputnik/target/near/*/*.wasm "$WASM/"
-fi
-echo "sputnikdao2.wasm, sputnikdao_factory2.wasm"
+"$ROOT/bot/scripts/build-sputnik.sh"
 
 step "Orbits: the nine modules, staking, the token, and the sandbox signer"
 for dir in "$ROOT"/orbits/modules/* "$ROOT/orbits/orbit-staking" "$ROOT/orbits/governance-token" "$ROOT/orbits/testing/mock-signer"; do

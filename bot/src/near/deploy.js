@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
-import { actions, nearToYocto } from "near-api-js";
+import { actions, nearToYocto, yoctoToNear } from "near-api-js";
 import { SPUTNIK_FACTORY_ID, OPERATOR_ACCOUNT_ID, OPERATOR_PRIVATE_KEY, NETWORK_ID } from "../config.js";
 import { operatorAccount, signingAccount, accountExists, availableBalance, view, call } from "./client.js";
 import { modelConfig, boardPolicy, orbitPolicy, ORBIT_PREFIX, MODULE_CONTRACT, isCouncilModel } from "./models.js";
@@ -112,6 +112,7 @@ async function registerWithToken(tokenId, accountId) {
 export async function createDao({ name, symbol, supply, decimals = 18, model, council = [], holder, onStep = () => {} }) {
   const contracts = publishedContracts(model);
   const ids = daoAccounts(name);
+  if (ids.base === SPUTNIK_FACTORY_ID) throw new Error(`${name} is the factory's own name - pick another name`);
   if (await accountExists(ids.dao)) throw new Error(`${ids.dao} already exists - pick another name`);
   const operator = operatorAccount();
   const parent = await namespace(ids.base);
@@ -121,7 +122,14 @@ export async function createDao({ name, symbol, supply, decimals = 18, model, co
   const policy = model === "board" ? boardPolicy(council) : orbitPolicy(orbitId);
   const args = Buffer.from(JSON.stringify({ config: { name, purpose: `${name}, governed by Orbits (${model})`, metadata: "" }, policy })).toString("base64");
   onStep("Creating the DAO on Sputnik");
-  await operator.callFunction({ contractId: SPUTNIK_FACTORY_ID, methodName: "create", args: { name, args }, deposit: DAO_DEPOSIT(), gas: 300n * TGAS });
+  try {
+    await operator.callFunction({ contractId: SPUTNIK_FACTORY_ID, methodName: "create", args: { name, args }, deposit: DAO_DEPOSIT(), gas: 300n * TGAS });
+  } catch (err) {
+    // A factory without global contracts deploys the whole DAO contract per DAO and says how much that takes.
+    const needed = /ERR_?NOT_?ENOUGH_?DEPOSIT:(\d+)/i.exec(String(err.message).replace(/\s/g, ""))?.[1];
+    if (needed) throw new Error(`${SPUTNIK_FACTORY_ID} needs ${Math.ceil(Number(yoctoToNear(needed)))} NEAR to create a DAO: set DAO_CREATE_DEPOSIT=${Math.ceil(Number(yoctoToNear(needed)))} in the bot's .env and restart it. What isn't used starts the treasury.`);
+    throw err;
+  }
   if (!(await accountExists(ids.dao))) throw new Error(`Sputnik's factory didn't create ${ids.dao}. An older factory needs more NEAR: set DAO_CREATE_DEPOSIT (e.g. 6).`);
 
   onStep("Creating the token and staking contract");
