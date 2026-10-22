@@ -5,60 +5,54 @@ and mainnet, with as much NEAR as you want. `bot/scripts/sandbox-flow.js`
 runs Protean end to end on it through the bot's own commands; only the chat
 and the key store are in memory. Every account, contract and DAO is real.
 
-## 1. Start a sandbox
-
-Download `near-sandbox` 2.12 or later (the contracts need protocol 84):
+## 1. Prepare (once)
 
 ```bash
-curl -O https://s3-us-west-1.amazonaws.com/build.nearprotocol.com/nearcore/Linux-x86_64/2.13.0/near-sandbox.tar.gz
-tar xzf near-sandbox.tar.gz
-./Linux-x86_64/near-sandbox --home ~/.near-sandbox init
-./Linux-x86_64/near-sandbox --home ~/.near-sandbox run
+./bot/scripts/sandbox-prepare.sh
 ```
 
-On macOS use `Darwin-arm64` in the URL.
+It needs git, curl, Node 20+, Rust (rustup) and cargo-near, on macOS or
+Linux x86_64, and puts everything in `.sandbox/` at the repo root (git
+ignores it):
 
-## 2. Build Sputnik and the Orbits contracts
+| What | From |
+| --- | --- |
+| The `near-sandbox` node, 2.13 (the contracts need protocol 84) | NEAR's builds |
+| Sputnik's factory and DAO contract, at the revision Orbits is tested against | `github.com/near-daos/sputnik-dao-contract`, built with Orbits' near-sdk |
+| The nine Orbits modules, staking, the token, and a stand-in Chain Signatures signer (same interface and key derivation, one public test key) | This repo, built with cargo near |
+| Rhea's exchange (the released Ref contract) | `github.com/marco-sundsk/ref-contracts`, `releases/` |
+| Wrapped NEAR and the NEAR Intents Verifier | `github.com/near/intents`, `releases/` |
+| LiNEAR | `github.com/linear-protocol/LiNEAR`, built with Rust 1.69, which the script installs |
+
+The first run takes a while; later runs only rebuild the Orbits contracts.
+It ends by printing the commands below with your paths.
+
+## 2. Start the node
+
+In its own terminal tab, left running:
 
 ```bash
-git clone https://github.com/near-daos/sputnik-dao-contract && cd sputnik-dao-contract
-git checkout 5434a59dec23ee0c49df8c8c4350c208a7e75b0b
-rm rust-toolchain.toml && cargo update -p near-sdk -p near-contract-standards --precise 5.29.1
-mkdir -p ../sputnik-wasm
-for c in sputnikdao2 sputnikdao-factory2; do (cd $c && cargo near build non-reproducible-wasm); done
-cp target/near/*/*.wasm ../sputnik-wasm/
-
-cd <this repo>/orbits
-for c in modules/* orbit-staking governance-token; do (cd $c && cargo near build non-reproducible-wasm); done
+ulimit -n 65535
+.sandbox/bin/near-sandbox --home .sandbox/home init     # first time only
+.sandbox/bin/near-sandbox --home .sandbox/home run
 ```
 
-## 3. Set up, publish, run
+## 3. Set up and run
+
+In another tab:
 
 ```bash
 cd bot
-node scripts/sandbox-setup.js ~/.near-sandbox ../../sputnik-wasm     # factory + operator, writes .env.sandbox
-node --env-file=.env.sandbox scripts/publish-contracts.js --yes       # all eleven, as global contracts
-node --env-file=.env.sandbox scripts/sandbox-flow.js
+node scripts/sandbox-setup.js ../.sandbox/home ../.sandbox/wasm     # Sputnik factory + operator, writes .env.sandbox
+node --env-file=.env.sandbox scripts/publish-contracts.js --yes     # all eleven, as global contracts
+node scripts/sandbox-venues.js ../.sandbox/home ../.sandbox/wasm    # Rhea, LiNEAR, NEAR Intents, the signer
+node --env-file=.env.sandbox scripts/sandbox-flow.js                # the main flow and the integrations
+node --env-file=.env.sandbox scripts/sandbox-models.js              # each governance model's own mechanics
 ```
 
-To also try the treasury commands, install the venues before running the
-flow: Rhea's released exchange contract (from
-`github.com/marco-sundsk/ref-contracts`, `releases/ref_exchange_release.wasm`),
-wrapped NEAR and the NEAR Intents Verifier (`github.com/near/intents`,
-`releases/wnear.wasm` and `releases/defuse-0.2.10.wasm`), LiNEAR
-(`github.com/linear-protocol/LiNEAR`, built with Rust 1.69:
-`cargo build -p linear --target wasm32-unknown-unknown --release`) and
-`governance_token.wasm` from `orbits/target/near`, as a test USDC, and
-`mock_signer.wasm`, a stand-in for the Chain Signatures signer with the real
-interface and key derivation and one public test key (build
-`orbits/testing/mock-signer` with cargo near). Put the six files in one
-folder, then:
-
-```bash
-node scripts/sandbox-venues.js ~/.near-sandbox <that folder>
-```
-
-It opens a NEAR/USDC pool on Rhea with 1,000 NEAR and 5,000 USDC.
+`sandbox-models.js liquid sowellian` runs only those models. To start over,
+stop the node, delete `.sandbox/home` and `bot/.env.sandbox`, and repeat
+from step 2. Without `sandbox-venues.js`, the flow skips the treasury steps.
 
 The sandbox clock is moved forward instead of waiting for voting periods.
 Expect `All checks passed.` after these steps:
@@ -85,3 +79,14 @@ Expect `All checks passed.` after these steps:
 | `/evm` | The DAO's EVM address, derived from its account by the signer |
 | `/hlagent <address> desk` | The DAO's key signs Hyperliquid's approveAgent; the signature recovers to the DAO's address (the post to Hyperliquid's API is stood in for) |
 | `/aave supply 5` | Executing signs approve and supply; both recover to the DAO's address and supply 5 USDC to Aave on its behalf. Base itself can't be reached from a sandbox, so its nonce, fees, balances and the final send are stood in for |
+
+`sandbox-models.js` gives each model its own DAO and chat:
+
+| Model | Checked |
+| --- | --- |
+| Liquid | Dave delegates to carol and carol to bob; only alice and bob vote. Dave's and carol's stake follows their chains to bob's vote (550k for, 250k against), and it pays out |
+| Optimistic | An unchallenged proposal executes after its window, with no vote. A challenged one goes to a vote, is defeated, and the challenger's 1,000-token bond comes back |
+| Delegate | The first council passes a payout seat by seat; after the term an election seats carol and dave by stake; stakers then recall dave |
+| Sortition | Three stakers join the pool; after the term a council is drawn from it, and it proposes and passes a payout that alice, no longer on it, can't vote on |
+| Sowellian | A bonded proposal is approved by stake; bets of 1,000 YES and 500 NO; it executes; after measuring, alice proposes Success, carol disputes, stakers adjudicate Success; bob collects the 1,500 pool and alice gets both bonds back |
+| Decision markets | The proposer seeds both markets; bob buys into the pass market; the pass average price beats the fail market's, so it passes and executes; bob redeems and the proposer reclaims the liquidity |

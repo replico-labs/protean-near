@@ -94,9 +94,12 @@ Expect `pass 48`. The commands run against a fake chain.
 
 ### 3. Run it on a local NEAR node
 
-A sandbox node runs the whole flow against real contracts, for free:
-create a DAO, stake, vote, execute, switch models, conviction locks, every
-module, and a board DAO. See [docs/sandbox.md](docs/sandbox.md).
+A sandbox node runs everything against real contracts, for free:
+`./bot/scripts/sandbox-prepare.sh` gets the node and every contract, then
+`sandbox-flow.js` runs a DAO's life and the integrations, and
+`sandbox-models.js` runs each governance model's own mechanics (delegation,
+challenges, elections and recalls, random councils, bets and adjudication,
+decision markets). See [docs/sandbox.md](docs/sandbox.md).
 
 ### 4. Run it on testnet
 

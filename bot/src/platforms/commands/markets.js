@@ -181,6 +181,15 @@ function assetOf(raw, token, usage) {
   throw new UserError(`Use NEAR or ${token.symbol}. Usage: \`${usage}\``);
 }
 
+/** A UserError unless the caller's account can spend `amount` yoctoNEAR and still pay gas. */
+async function requireNear(ctx, account, amount) {
+  const spendable = await services.wallets.availableBalance(account.accountId);
+  const gas = 5n * 10n ** 22n; // 0.05 NEAR: a 300 Tgas call reserves about 0.03 at today's gas price
+  if (spendable < amount + gas) {
+    throw new UserError(`That takes ${formatNear(amount)} NEAR; your account has ${formatNear(spendable)} spendable. Send NEAR to it first (\`${ctx.cmd("wallet")}\` shows its address).`);
+  }
+}
+
 const seed = {
   section: "Markets",
   usage: "<id> <tokens> <NEAR>",
@@ -195,7 +204,8 @@ const seed = {
     const tokens = parseAmount(ctx.args[1], token.decimals, usage);
     const near = parseAmount(ctx.args[2], NEAR_DECIMALS, usage);
     const account = await userAccount(ctx);
-    // Check the token side first, so a short balance doesn't leave a half-seeded proposal.
+    // Check both sides first, so a short balance doesn't leave a half-seeded proposal.
+    await requireNear(ctx, account, near);
     const balance = await services.staking.tokenBalance(token.id, account.accountId);
     if (balance < tokens) throw new UserError(`The token seed takes ${token.format(tokens)}; you have ${token.format(balance)} unstaked.`);
     await explain(() => services.orbit.seedNear(account, dao.orbitId, id, near), { ERR_NOT_PROPOSER: "Only the proposer seeds its markets.", ERR_ALREADY_SEEDED: "It's already seeded." });
@@ -219,6 +229,7 @@ const split = {
     const amount = parseAmount(ctx.args[1], a.decimals, usage);
     if (a.asset === "Near") {
       const account = await userAccount(ctx);
+      await requireNear(ctx, account, amount);
       await explain(() => services.orbit.splitNear(account, dao.orbitId, id, amount), { ERR_TRADING_CLOSED: "Trading isn't open on that proposal." });
     } else {
       await sendTokens(ctx, dao, amount, { split: id }, "Splitting");

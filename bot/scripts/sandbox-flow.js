@@ -10,103 +10,15 @@
 // Voting periods are a minute; the script moves the sandbox's clock forward
 // instead of waiting.
 import assert from "node:assert/strict";
+import { services, RUN, account, link, run, rpc, advance, step, near, propose, pass } from "./sandbox-lib.js";
 
-process.env.VOTING_PERIOD_MINUTES ??= "1";
-process.env.TIMELOCK_MINUTES ??= "1";
-if (process.env.NEAR_NETWORK !== "sandbox") throw new Error("Run with --env-file=.env.sandbox");
-
-const { KeyPair, nearToYocto, yoctoToNear } = await import("near-api-js");
-const { RPC_URL, OPERATOR_ACCOUNT_ID } = await import("../src/config.js");
-const { runCommand } = await import("../src/platforms/commands.js");
-const { services } = await import("../src/platforms/services.js");
+const { nearToYocto, yoctoToNear } = await import("near-api-js");
+const { OPERATOR_ACCOUNT_ID } = await import("../src/config.js");
 const { operatorAccount, signingAccount, accountExists, availableBalance, view, call } = await import("../src/near/client.js");
-const { ensureGas, userAccountId } = await import("../src/near/wallets.js");
 const deploy = await import("../src/near/deploy.js");
 const { modelConfig, MODULE_CONTRACT } = await import("../src/near/models.js");
 
 const E18 = 10n ** 18n;
-const CHAT = "-1001";
-
-// --- In-memory chat links and keys; everything else is the bot's real services ---
-
-const links = {};
-const keys = {};
-Object.assign(services, {
-  isWalletStoreConfigured: () => true,
-  db: {
-    getChatDao: (platform, chatId) => links[`${platform}:${chatId}`] ?? null,
-    setChatDao: (platform, chatId, link) => (links[`${platform}:${chatId}`] = link),
-    removeChatDao: (platform, chatId) => delete links[`${platform}:${chatId}`],
-  },
-  wallets: {
-    async getOrCreateUserAccount(platform, userId) {
-      const accountId = userAccountId(platform, userId);
-      if (!keys[accountId]) {
-        keys[accountId] = KeyPair.fromRandom("ed25519");
-        await operatorAccount().createSubAccount({ accountOrPrefix: accountId, publicKey: keys[accountId].getPublicKey().toString(), nearToTransfer: nearToYocto("1") });
-      }
-      return signingAccount(accountId, keys[accountId].toString());
-    },
-    ensureGas,
-    findUserAccountId: async (platform, userId) => (keys[userAccountId(platform, userId)] ? userAccountId(platform, userId) : null),
-    availableBalance,
-  },
-});
-
-// Each run gets new users: the sandbox keeps accounts, but keys here live in memory.
-const RUN = String(Date.now() % 1_000_000);
-const tgId = (user) => `${RUN}${user}`;
-
-/** Runs `/name args...` as user 1, 2 or 3 in the test chat; fails on a refusal unless `expect` says otherwise. */
-async function run(userId, line, { expect } = {}) {
-  const [name, ...args] = line.split(/\s+/);
-  const reply = await runCommand(name, { platform: "telegram", chatId: CHAT, userId: tgId(userId), args, isAdmin: true, cmd: (n) => `/${n}` });
-  console.log(`  ${userName[userId]}: /${line}\n    → ${reply.text.split("\n").join("\n      ")}`);
-  if (expect) assert.match(reply.text, expect, `/${line}`);
-  else assert.ok(!reply.ephemeral, `/${line} was refused: ${reply.text}`);
-  return reply;
-}
-
-async function rpc(method, params) {
-  const res = await fetch(RPC_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-  const body = await res.json();
-  if (body.error) throw new Error(JSON.stringify(body.error));
-  return body.result;
-}
-
-/** Moves the sandbox's clock forward about `minutes`. */
-async function advance(minutes) {
-  const res = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sandbox_fast_forward", params: { delta_height: Math.ceil(minutes * 60) } }),
-  });
-  const body = await res.json();
-  if (body.error) throw new Error(JSON.stringify(body.error));
-  // Transactions reference a final block; wait until finality catches up with the jump.
-  const height = async (finality) => (await rpc("block", { finality })).header.height;
-  const target = await height("optimistic");
-  while ((await height("final")) < target) await new Promise((r) => setTimeout(r, 300));
-  console.log(`  ⏩ ${minutes} minute(s) later`);
-}
-
-const step = (title) => console.log(`\n== ${title}`);
-
-/** Alice proposes with `line`; returns the new proposal's number. */
-async function propose(line) {
-  const reply = await run(1, line, { expect: /New proposal/ });
-  return Number(/\*#(\d+)\*/.exec(reply.text)[1]);
-}
-
-/** Everyone votes for proposal `id`, the clock passes its vote and timelock, and carol executes it. */
-async function pass(id) {
-  for (const u of [1, 2, 3]) await run(u, `vote ${id} for`);
-  await advance(2.5);
-  return run(3, `execute ${id}`, { expect: /executed/i });
-}
-const link = () => links[`telegram:${CHAT}`];
-const near = (yocto) => `${yoctoToNear(yocto)} NEAR`;
-const userName = { 1: "alice", 2: "bob", 3: "carol" };
 const name = `ark${RUN}`;
 
 // ---------------------------------------------------------------------------
@@ -114,9 +26,7 @@ const name = `ark${RUN}`;
 step(`Alice creates a token-weighted DAO "${name}" from the chat`);
 await run(1, `createdao ${name} ARK 1000000`, { expect: /is live/ });
 const { daoId, tokenId } = link();
-const alice = userAccountId("telegram", tgId(1));
-const bob = userAccountId("telegram", tgId(2));
-const carol = userAccountId("telegram", tgId(3));
+const [alice, bob, carol] = [account(1), account(2), account(3)];
 assert.deepEqual((await view(daoId, "get_policy")).roles.find((r) => r.name === "governance").kind.Group, [link().orbitId]);
 console.log(`  The core ${daoId} has one member: the orbit ${link().orbitId}`);
 

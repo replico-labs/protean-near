@@ -408,10 +408,11 @@ test("decision markets: propose, seed, trade", async () => {
   linked("decisionMarkets");
   const proposed = await runCommand("pay", ctx(["1", "NEAR", "me", "grant"]));
   assert.match(proposed.text, /\/seed 0 <tokens> <NEAR>/);
-  assert.match((await runCommand("seed", ctx(["0", "1000", "10"]))).text, /takes 1000 ARK; you have 100 ARK/);
+  assert.match((await runCommand("seed", ctx(["0", "1000", "1"]))).text, /takes 1000 ARK; you have 100 ARK/);
+  assert.match((await runCommand("seed", ctx(["0", "50", "10"]))).text, /takes 10 NEAR; your account has 5 spendable/);
   assert.equal(calls.length, 1, "nothing seeded on a short balance");
-  await runCommand("seed", ctx(["0", "50", "10"]));
-  assert.deepEqual(calls[1], ["seedNear", 0, 10n * 10n ** 24n]);
+  await runCommand("seed", ctx(["0", "50", "1"]));
+  assert.deepEqual(calls[1], ["seedNear", 0, 10n ** 24n]);
   assert.deepEqual(calls[2], ["sendToOrbit", 50n * E18, { seed: 0 }]);
   const traded = await runCommand("trade", ctx(["0", "pass", "0.5", "NEAR"]));
   assert.deepEqual(calls[3], ["trade", 0, "Pass", "Near", 5n * 10n ** 23n]);

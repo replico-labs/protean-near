@@ -91,7 +91,17 @@ export async function createOrbit({ name, daoId, tokenId, stakingId, model, supp
     model: modelConfig(model, supply, size),
     council: isCouncilModel(model) ? council : null,
   });
+  await registerWithToken(tokenId, orbitId);
   return orbitId;
+}
+
+/**
+ * Registers `accountId` with the DAO's token, paid by the operator. The
+ * orbit receives tokens (challenge bonds, Sowellian bonds and bets, market
+ * seeds), which the token refuses for an account it doesn't know.
+ */
+async function registerWithToken(tokenId, accountId) {
+  await call(operatorAccount(), tokenId, "storage_deposit", { account_id: accountId, registration_only: true }, { deposit: TOKEN_STORAGE });
 }
 
 /**
@@ -131,6 +141,7 @@ export async function createDao({ name, symbol, supply, decimals = 18, model, co
       model: modelConfig(model, supply, size),
       council: isCouncilModel(model) ? council : null,
     });
+    await registerWithToken(ids.token, orbitId);
     if (model === "conviction") await call(operator, orbitId, "claim_locker");
   }
   const governing = (await view(ids.dao, "get_policy")).roles.find((r) => r.name === "governance").kind.Group;
