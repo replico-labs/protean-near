@@ -1,7 +1,7 @@
 import { MODELS, isCouncilModel } from "../../near/models.js";
 import * as kinds from "../../near/kinds.js";
 import { services } from "../services.js";
-import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, tokenInfo, explain } from "../helpers.js";
+import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, tokenInfo, explain, accountLink } from "../helpers.js";
 import { describeProposal, loadProposal } from "../proposals.js";
 
 const MODEL_NAMES = Object.keys(MODELS);
@@ -49,9 +49,9 @@ const createdao = {
     return reply(
       [
         `🏛 *${name}* is live, with *${model}* governance.`,
-        `DAO: \`${created.daoId}\``,
-        created.orbitId ? `Orbit: \`${created.orbitId}\`` : `Members: ${council.map((m) => `\`${m}\``).join(", ")}`,
-        `Token: ${rawSupply} ${symbol.toUpperCase()} (\`${created.tokenId}\`), all held by you (\`${holder}\`).`,
+        `DAO: ${accountLink(created.daoId)}`,
+        created.orbitId ? `Orbit: ${accountLink(created.orbitId)}` : `Members: ${council.map(accountLink).join(", ")}`,
+        `Token: ${rawSupply} ${symbol.toUpperCase()} (${accountLink(created.tokenId)}), all held by you (${accountLink(holder)}).`,
         "",
         next,
       ].join("\n")

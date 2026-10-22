@@ -1,7 +1,7 @@
 import { NEAR_DECIMALS } from "../../near/amounts.js";
 import { isStakeModel } from "../../near/models.js";
 import { services } from "../services.js";
-import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, formatNear, tokenInfo, explain } from "../helpers.js";
+import { UserError, reply, requireDao, userAccount, parseAmount, recipientAccount, accountLink, txLink, formatNear, tokenInfo, explain } from "../helpers.js";
 
 const wallet = {
   section: "Your wallet",
@@ -12,7 +12,7 @@ const wallet = {
   async run(ctx) {
     const account = await userAccount(ctx);
     const near = await services.wallets.availableBalance(account.accountId);
-    const lines = [`*Your account:* \`${account.accountId}\``, `NEAR: ${formatNear(near)}`];
+    const lines = [`*Your account:* ${accountLink(account.accountId)}`, `NEAR: ${formatNear(near)}`];
     const dao = services.db.getChatDao(ctx.platform, ctx.chatId);
     if (dao) {
       const token = await tokenInfo(dao);
@@ -71,32 +71,62 @@ const unstake = {
   },
 };
 
+/** Who a transfer went to: the member replied to by name, with their account. */
+const toWhom = (ctx, rawTo, to) => (rawTo === undefined && ctx.replyTo ? `${ctx.replyTo.name} (${accountLink(to)})` : accountLink(to));
+
 const send = {
   section: "Your wallet",
-  usage: "<amount> <NEAR|token> <account>",
-  description: "Send NEAR or the DAO's token from your account",
+  usage: "<amount> <NEAR|token> [account]",
+  description: "Send NEAR or the DAO's token; reply to someone's message to send to them",
   options: [
     { name: "amount", description: "How much", required: true },
     { name: "currency", description: "NEAR, or the DAO's token symbol", required: true },
-    { name: "to", description: "Receiving NEAR account", required: true },
+    { name: "to", description: "A NEAR account, or @mention a member", required: true },
   ],
   async run(ctx) {
     const usage = `${ctx.cmd("send")} <amount> <NEAR|token> <account>`;
     const [rawAmount, currency, rawTo] = ctx.args;
-    const to = await parseAccountId(ctx, rawTo, usage);
+    const to = await recipientAccount(ctx, rawTo, usage);
     const account = await userAccount(ctx);
     if (currency?.toUpperCase() === "NEAR") {
       const amount = parseAmount(rawAmount, NEAR_DECIMALS, usage);
-      await account.transfer({ receiverId: to, amount });
-      return reply(`✅ Sent ${formatNear(amount)} NEAR to \`${to}\`.`);
+      const outcome = await account.transfer({ receiverId: to, amount });
+      return reply(`✅ Sent ${formatNear(amount)} NEAR to ${toWhom(ctx, rawTo, to)}.${txLink(outcome?.transaction?.hash)}`);
     }
     const dao = requireDao(ctx);
     const token = await tokenInfo(dao);
     if (currency?.toUpperCase() !== token.symbol.toUpperCase()) throw new UserError(`Send NEAR or ${token.symbol}. Usage: \`${usage}\``);
-    const amount = parseAmount(rawAmount, token.decimals, usage);
-    await services.staking.sendToken(account, token.id, to, amount);
-    return reply(`✅ Sent ${token.format(amount)} to \`${to}\`.`);
+    return sendDaoToken(ctx, dao, token, account, rawAmount, rawTo, to, usage);
   },
 };
 
-export const WALLET_COMMANDS = { wallet, stake, unstake, send };
+async function sendDaoToken(ctx, dao, token, account, rawAmount, rawTo, to, usage) {
+  const amount = parseAmount(rawAmount, token.decimals, usage);
+  if (to === account.accountId) throw new UserError("That's your own account.");
+  const balance = await services.staking.tokenBalance(token.id, account.accountId);
+  if (balance < amount) throw new UserError(`You have ${token.format(balance)} in your account (staked tokens don't count; \`${ctx.cmd("unstake")}\` first).`);
+  const hash = await services.staking.sendToken(account, token.id, to, amount);
+  return reply(`✅ Sent ${token.format(amount)} to ${toWhom(ctx, rawTo, to)}.${txLink(hash)}`);
+}
+
+const tip = {
+  section: "Your wallet",
+  needsDao: true,
+  usage: "<amount> [account]",
+  description: "Tip the DAO's token: reply to someone's message, or name an account",
+  options: [
+    { name: "amount", description: "How many tokens", required: true },
+    { name: "to", description: "A NEAR account, or @mention a member", required: true },
+  ],
+  async run(ctx) {
+    const usage = `${ctx.cmd("tip")} <amount> <account>`;
+    const dao = requireDao(ctx);
+    const [rawAmount, rawTo] = ctx.args;
+    if (rawTo === undefined && !ctx.replyTo) throw new UserError(`Reply to someone's message with \`${ctx.cmd("tip")} <amount>\`, or name their account: \`${usage}\``);
+    const to = await recipientAccount(ctx, rawTo, usage);
+    const [account, token] = await Promise.all([userAccount(ctx), tokenInfo(dao)]);
+    return sendDaoToken(ctx, dao, token, account, rawAmount, rawTo, to, usage);
+  },
+};
+
+export const WALLET_COMMANDS = { wallet, stake, unstake, send, tip };

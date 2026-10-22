@@ -1,5 +1,5 @@
 import { nearToYocto } from "near-api-js";
-import { view, call } from "./client.js";
+import { view, call, callWithOutcome } from "./client.js";
 
 /**
  * A DAO's staking contract (orbits/orbit-staking) and its NEP-141 token.
@@ -27,9 +27,11 @@ export async function ensureTokenStorage(account, tokenId, accountId = account.a
 }
 
 /** Sends `amount` token units to `receiverId`, registering them on the token first. */
+/** Sends `amount` token units to `receiverId`, registering them with the token first; returns the transaction's hash. */
 export async function sendToken(account, tokenId, receiverId, amount) {
   await ensureTokenStorage(account, tokenId, receiverId);
-  await call(account, tokenId, "ft_transfer", { receiver_id: receiverId, amount: String(amount) }, { deposit: ONE_YOCTO });
+  const outcome = await callWithOutcome(account, tokenId, "ft_transfer", { receiver_id: receiverId, amount: String(amount) }, { deposit: ONE_YOCTO });
+  return outcome.transaction?.hash;
 }
 
 // --- Staking ---

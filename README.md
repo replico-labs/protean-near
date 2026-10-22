@@ -152,7 +152,7 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 | | |
 | --- | --- |
 | Setup | `/createdao <name> <SYMBOL> <supply> [model] [members...]` · `/link <dao> [orbit]` · `/unlink` · `/switchmodel <model> [members...]` |
-| Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` |
+| Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` · `/tip <amount>` (as a reply to someone's message; or name an account) |
 | The DAO | `/dao` · `/treasury` · `/proposals` · `/proposal <id>` · `/council` |
 | Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
 | NEAR Intents | `/buy <amount> <from> <to>[@chain] [slippage%]` · `/paychain <amount> <token>@<chain> <address> <description>` · `/intentsstatus <id>` · `/intentswithdraw <amount> <token>` |

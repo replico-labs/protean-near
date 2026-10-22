@@ -111,8 +111,21 @@ function commandContext(ctx, args) {
     userId: String(ctx.from.id),
     args,
     isDirect: ctx.chat.type === "private",
+    replyTo: repliedTo(ctx.message),
     cmd,
   };
+}
+
+/**
+ * The person whose message a command replies to (/tip 100 as a reply tips
+ * them), or null. In a forum topic every message "replies" to the topic's
+ * first message, which isn't a reply to anyone; bots have no accounts.
+ */
+export function repliedTo(message) {
+  const replied = message?.reply_to_message;
+  if (!replied?.from || replied.from.is_bot || replied.forum_topic_created) return null;
+  if (message.is_topic_message && replied.message_id === message.message_thread_id) return null;
+  return { userId: String(replied.from.id), name: replied.from.first_name || replied.from.username || "them" };
 }
 
 export function createTelegramBot(token) {

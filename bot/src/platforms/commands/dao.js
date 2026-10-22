@@ -1,7 +1,7 @@
 import { fromUnits } from "../../near/amounts.js";
 import { MODELS } from "../../near/models.js";
 import { services } from "../services.js";
-import { UserError, reply, requireDao, parseId, formatNear, tokenInfo, formatDuration, formatTime, nowNs } from "../helpers.js";
+import { UserError, reply, requireDao, parseId, formatNear, tokenInfo, formatDuration, formatTime, nowNs, accountLink } from "../helpers.js";
 import { loadProposal, describeProposal, latestProposals } from "../proposals.js";
 
 const bps = (b) => `${b / 100}%`;
@@ -104,7 +104,7 @@ const treasury = {
       services.staking.tokenBalance(token.id, dao.daoId),
       otherHoldings(dao.daoId),
     ]);
-    return reply([`*Treasury of* \`${dao.daoId}\``, `NEAR: ${formatNear(near)}`, `${token.symbol}: ${token.format(tokens)}`, ...holdings].join("\n"));
+    return reply([`*Treasury of* ${accountLink(dao.daoId)}`, `NEAR: ${formatNear(near)}`, `${token.symbol}: ${token.format(tokens)}`, ...holdings].join("\n"));
   },
 };
 

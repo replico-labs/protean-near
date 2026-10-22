@@ -382,6 +382,41 @@ test("send moves tokens or NEAR", async () => {
   assert.deepEqual(calls[1], ["transfer", "bob.testnet", 5n * 10n ** 23n]);
 });
 
+test("tip sends the DAO's token to the member replied to, and links the transaction", async () => {
+  linked();
+  services.wallets.getOrCreateUserAccount = async (platform, userId) => ({ accountId: userId === "42" ? ME : `tg${userId}.orbits.testnet` });
+  services.staking.sendToken = async (acct, token, to, amount) => {
+    calls.push(["sendToken", token, to, amount]);
+    return "TxHash1";
+  };
+  const res = await runCommand("tip", ctx(["25"], { replyTo: { userId: "7", name: "Bola" } }));
+  assert.deepEqual(calls[0], ["sendToken", TOKEN, "tg7.orbits.testnet", 25n * E18]);
+  assert.match(res.text, /Sent 25 ARK to Bola \(\[tg7\.orbits\.testnet\]\(https:\/\/testnet\.nearblocks\.io\/address\/tg7\.orbits\.testnet\)\)/);
+  assert.match(res.text, /\[View transaction\]\(https:\/\/testnet\.nearblocks\.io\/txns\/TxHash1\)/);
+  // /send works the same way as a reply, and with a Discord mention
+  await runCommand("send", ctx(["2", "ARK"], { replyTo: { userId: "7", name: "Bola" } }));
+  links["discord:-100"] = links["telegram:-100"];
+  await runCommand("send", ctx(["3", "ARK", "<@9>"], { platform: "discord" }));
+  assert.deepEqual(calls.slice(1), [["sendToken", TOKEN, "tg7.orbits.testnet", 2n * E18], ["sendToken", TOKEN, "tg9.orbits.testnet", 3n * E18]]);
+});
+
+test("tip explains what it needs, and refuses more than you hold or a username", async () => {
+  linked();
+  assert.match((await runCommand("tip", ctx(["25"]))).text, /Reply to someone's message with `\/tip <amount>`/);
+  assert.match((await runCommand("tip", ctx(["25", "@bola"]))).text, /can't find an account from a username\. Reply to one of @bola's messages with `\/tip <amount>`/);
+  assert.match((await runCommand("tip", ctx(["500", "bob.testnet"]))).text, /You have 100 ARK in your account/);
+  assert.equal(calls.length, 0);
+});
+
+test("a reply in a forum topic isn't a reply to anyone", async () => {
+  const { repliedTo } = await import("../src/platforms/telegram.js");
+  const from = { id: 7, first_name: "Bola" };
+  assert.deepEqual(repliedTo({ reply_to_message: { message_id: 5, from } }), { userId: "7", name: "Bola" });
+  assert.equal(repliedTo({ is_topic_message: true, message_thread_id: 5, reply_to_message: { message_id: 5, from } }), null);
+  assert.equal(repliedTo({ reply_to_message: { message_id: 5, from: { id: 1, is_bot: true } } }), null);
+  assert.equal(repliedTo({}), null);
+});
+
 test("every command has the fields the platforms need", () => {
   for (const [name, c] of Object.entries(COMMANDS)) {
     assert.ok(c.section && c.description && Array.isArray(c.options) && typeof c.run === "function", name);

@@ -1,5 +1,6 @@
 import { NEAR_DECIMALS, toUnits, fromUnits } from "../near/amounts.js";
 import { ChainError } from "../near/client.js";
+import { EXPLORER_URL, NETWORK_ID } from "../config.js";
 import { services } from "./services.js";
 
 /**
@@ -57,6 +58,30 @@ export async function parseAccountId(ctx, raw, usage) {
   if (id.length < 2 || id.length > 64 || !ACCOUNT_ID.test(id)) throw new UserError(`\`${raw ?? ""}\` isn't a NEAR account. Usage: \`${usage}\``);
   return id;
 }
+
+/**
+ * Who to send to: a NEAR account, "me", or a chat member, by replying to
+ * one of their messages (Telegram) or mentioning them (Discord). A member
+ * without a bot account yet gets one, so what's sent waits for them there.
+ */
+export async function recipientAccount(ctx, raw, usage) {
+  const mentioned = /^<@!?(\d+)>$/.exec(raw ?? "")?.[1];
+  const member = mentioned ?? (raw === undefined ? ctx.replyTo?.userId : undefined);
+  if (member) {
+    if (!services.isWalletStoreConfigured()) throw new UserError(NO_WALLETS);
+    return (await services.wallets.getOrCreateUserAccount(ctx.platform, member)).accountId;
+  }
+  if (String(raw ?? "").startsWith("@")) {
+    throw new UserError(`I can't find an account from a username. Reply to one of ${raw}'s messages with \`${usage.replace(/ <(account|to)>.*$/, "")}\`, or use the account their \`${ctx.cmd("wallet")}\` shows.`);
+  }
+  return parseAccountId(ctx, raw, usage);
+}
+
+/** An account as a link to the explorer (a plain name on a local sandbox). */
+export const accountLink = (id) => (NETWORK_ID === "sandbox" ? `\`${id}\`` : `[${id}](${EXPLORER_URL}/address/${id})`);
+
+/** " · View transaction", linking a transaction on the explorer, or "" without one. */
+export const txLink = (hash) => (hash && NETWORK_ID !== "sandbox" ? ` · [View transaction](${EXPLORER_URL}/txns/${hash})` : "");
 
 export function choiceOf(raw, usage) {
   const choice = { for: "For", yes: "For", against: "Against", no: "Against", abstain: "Abstain" }[String(raw).toLowerCase()];
