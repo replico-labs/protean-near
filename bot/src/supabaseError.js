@@ -9,3 +9,18 @@ export function supabaseMessage(error) {
   const title = msg.match(/<title>([^<]*)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim();
   return title ? `HTML error page: ${title}` : "HTML error page (Supabase unreachable)";
 }
+
+/**
+ * SUPABASE_URL as supabase-js wants it: the project URL alone
+ * (https://<ref>.supabase.co). The dashboard also shows the REST endpoint,
+ * .../rest/v1/, and a pasted path makes every request fail with "Invalid
+ * path specified in request URL", so only the origin is kept.
+ */
+export function supabaseUrl(url = process.env.SUPABASE_URL) {
+  if (!url) return url;
+  try {
+    return new URL(url.trim()).origin;
+  } catch {
+    throw new Error(`SUPABASE_URL isn't a URL: use the Project URL from Supabase's settings, like https://<project-ref>.supabase.co`);
+  }
+}

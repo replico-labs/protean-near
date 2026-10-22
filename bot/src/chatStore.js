@@ -2,7 +2,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 import { readJson, updateJson, writeJsonAtomic } from "./jsonFile.js";
-import { supabaseMessage } from "./supabaseError.js";
+import { supabaseMessage, supabaseUrl } from "./supabaseError.js";
 
 /**
  * Where chat links live (db.js reads and writes through here).
@@ -45,7 +45,7 @@ let failing = false;
 let refreshFailing = false;
 
 function client() {
-  const url = process.env.SUPABASE_URL;
+  const url = supabaseUrl();
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) throw new Error("CHAT_LINKS_STORE=supabase needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   return createClient(url, serviceKey, { auth: { persistSession: false } });

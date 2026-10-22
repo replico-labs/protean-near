@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import util from "node:util";
 
 /**
@@ -16,6 +16,11 @@ import util from "node:util";
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PRIVATE|SEED|_KEY$|_KEY_ID$|SIGNING/i;
 // Env vars holding URLs that may carry a key (RPC endpoints).
 const URL_NAME = /RPC_URLS?$|_URL$/i;
+
+// The real settings, from .env. Tests (node --test) and the sandbox scripts
+// (--env-file=.env.sandbox) bring their own, so they never read it: the bot's
+// own Supabase, keys and chats stay out of a test run.
+if (!process.env.NODE_TEST_CONTEXT && process.env.NEAR_NETWORK !== "sandbox") dotenv.config({ quiet: true });
 
 let secretValues = null;
 /** Exact secret values from the environment, longest first, read once (after dotenv has loaded). */

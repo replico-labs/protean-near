@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { supabaseMessage } from "./supabaseError.js";
+import { supabaseMessage, supabaseUrl } from "./supabaseError.js";
 import { createEncryptedKey, decryptKey, isKmsWalletConfigured } from "./kmsWallet.js";
 
 /**
@@ -8,7 +8,7 @@ import { createEncryptedKey, decryptKey, isKmsWalletConfigured } from "./kmsWall
  * durable storage, not a file on a volume.
  */
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL = supabaseUrl();
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 let supabase = null;

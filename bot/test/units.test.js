@@ -8,6 +8,7 @@ import { parseCommandText, splitForTelegram, menuFor, syncChatMenu } from "../sr
 import { argsFromOptions, buildSlashCommands, toDiscordMarkdown } from "../src/platforms/discord.js";
 import { COMMANDS } from "../src/platforms/commands.js";
 import { kindFixtures, modelFixtures, policyFixtures } from "./kindFixtures.js";
+import { supabaseUrl } from "../src/supabaseError.js";
 import { MODELS, MODULE_CONTRACT, ORBIT_PREFIX, executionHorizonNs, modelConfig } from "../src/near/models.js";
 
 test("amounts convert without floating point", () => {
@@ -215,4 +216,10 @@ test("Hyperliquid actions hash exactly as Hyperliquid's own SDK signs them", asy
   const { nonce, validUntil } = hl.nonceForProposal(now);
   assert.equal(nonce, now + 23 * 3_600_000);
   assert.equal(validUntil.getTime(), now + 23 * 3_600_000 + 47 * 3_600_000);
+});
+
+test("SUPABASE_URL keeps only the project URL, even when the REST path is pasted", () => {
+  assert.equal(supabaseUrl("https://abcd.supabase.co"), "https://abcd.supabase.co");
+  assert.equal(supabaseUrl(" https://abcd.supabase.co/rest/v1/ "), "https://abcd.supabase.co");
+  assert.throws(() => supabaseUrl("abcd.supabase.co"), /Project URL/);
 });
