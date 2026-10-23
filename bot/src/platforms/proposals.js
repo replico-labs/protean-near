@@ -112,6 +112,8 @@ export async function followSwap(ctx, link, kind, account) {
   if (!governing.includes(newOrbit)) return "";
   const { name: model } = services.orbit.modelOf(await services.orbit.getModel(newOrbit));
   if (model === "conviction") await services.orbit.claimLocker(account, newOrbit);
-  services.db.setChatDao(ctx.platform, ctx.chatId, { ...link, orbitId: newOrbit, model, pendingSwap: undefined });
+  // The stored link, which may have changed since `link` was read (executions remembered meanwhile).
+  const current = services.db.getChatDao(ctx.platform, ctx.chatId) ?? link;
+  services.db.setChatDao(ctx.platform, ctx.chatId, { ...current, orbitId: newOrbit, model, pendingSwap: undefined });
   return `\n\n🔀 The DAO now runs *${model}* governance (\`${newOrbit}\`). Same treasury, same stakes.`;
 }

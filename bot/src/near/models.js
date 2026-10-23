@@ -196,6 +196,16 @@ export function executionHorizonNs(name, settings, boardPeriod = 7n * 24n * 60n 
   }
 }
 
+/**
+ * How long a passed proposal stays executable under model `name` with
+ * `settings` (from the orbit), in nanoseconds, or null where the model
+ * doesn't say.
+ */
+export function executionPeriodNs(name, settings) {
+  const rules = { optimistic: settings?.rules, delegate: settings?.council, sortition: settings?.council, sowellian: settings?.approval }[name] ?? settings;
+  return rules?.execution_period ? BigInt(rules.execution_period) : null;
+}
+
 /** The policy of a DAO governed by `orbitId`: the orbit is its only member. */
 export function orbitPolicy(orbitId) {
   return {

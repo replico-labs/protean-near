@@ -66,6 +66,10 @@ beforeEach(() => {
       getCoreProposal: async (dao, id) => state.coreProposals[id] ?? null,
       getCoreProposals: async (dao, from, limit) => state.coreProposals.slice(from, from + limit),
       getLastProposalId: async () => state.coreProposals.length,
+      transactionOutcome: async (hash, sender) => {
+        calls.push(["transactionOutcome", hash, sender]);
+        return { receipts_outcome: [] };
+      },
       addProposal: async (acct, dao, description, kind) => {
         calls.push(["addProposal", description, kind]);
         state.coreProposals.push({ id: state.coreProposals.length, description, kind, status: "InProgress", vote_counts: {} });
@@ -109,7 +113,7 @@ beforeEach(() => {
     },
     evm: {
       ...realEvm,
-      base: () => ({ name: "Base Sepolia", chainId: 84532, usdc: "0x00000000000000000000000000000000000000c1", aUsdc: "0x00000000000000000000000000000000000000c2", aavePool: "0x00000000000000000000000000000000000000c3" }),
+      base: () => ({ name: "Base Sepolia", chainId: 84532, usdc: "0x00000000000000000000000000000000000000c1", aUsdc: "0x00000000000000000000000000000000000000c2", aavePool: "0x00000000000000000000000000000000000000c3", wethGateway: "0x00000000000000000000000000000000000000c4", aWeth: "0x00000000000000000000000000000000000000c5" }),
       balances: async () => state.evmBalances ?? { eth: 10n ** 16n, usdc: 20_000_000n, aUsdc: 3_000_000n },
       txParams: async () => ({ nonce: 3, maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1n }),
       signedTx: async (serialized, sig) => {
@@ -199,8 +203,9 @@ beforeEach(() => {
         if (state.noStake) return { counted: false, weight: "0", state: "Active" };
         return { counted: true, weight: "40", state: "Active" };
       },
-      executeWithOutcome: async (acct, orbit, id) => {
+      executeWithOutcome: async (acct, orbit, id, options) => {
         calls.push(["executeWithOutcome", id]);
+        await options?.onSent?.("NearTx1");
         state.proposals[id].state = "Executed";
         return { receipts_outcome: [] };
       },
@@ -589,6 +594,30 @@ test("aave supply proposes signing approve + supply from the DAO's EVM address; 
   assert.match(executed.text, /Sent on Base Sepolia: `0xhash1`[\s\S]*Sent on Base Sepolia: `0xhash2`/);
 });
 
+test("if sending what an execution signed fails, /execute again reads the execution and finishes it", async () => {
+  linked();
+  await runCommand("aave", ctx(["supply", "5"]));
+  state.proposals[0].state = "Succeeded";
+  state.signatures = [{ r: "0x01", s: "0x02", yParity: 0 }, { r: "0x02", s: "0x04", yParity: 1 }];
+  const realBroadcast = services.evm.broadcast;
+  let down = true;
+  services.evm.broadcast = async (chain, signed) => {
+    if (down && signed.endsWith(":signed:0x02")) throw new Error("Base is down");
+    if (!down && signed.endsWith(":signed:0x01")) throw new Error("already known");
+    return realBroadcast(chain, signed);
+  };
+  const first = await runCommand("execute", ctx(["0"]));
+  assert.match(first.text, /Sent on Base Sepolia: `0xhash1`[\s\S]*Transaction 2 wasn't sent: Base is down[\s\S]*`\/execute 0` tries sending again/);
+  assert.deepEqual(links["telegram:-100"].relays, { 0: { txHash: "NearTx1", sender: ME } });
+
+  down = false;
+  const second = await runCommand("execute", ctx(["0"]));
+  assert.deepEqual(calls.find((c) => c[0] === "transactionOutcome"), ["transactionOutcome", "NearTx1", ME]);
+  assert.match(second.text, /executed earlier; sending what it signed[\s\S]*Transaction 1 was already sent[\s\S]*Sent on Base Sepolia: `0xhash/);
+  assert.deepEqual(links["telegram:-100"].relays, {}, "nothing left to send");
+  assert.match((await runCommand("execute", ctx(["0"]))).text, /already executed/);
+});
+
 test("aave refuses without gas or funds, a second open EVM proposal, and bad input", async () => {
   linked();
   state.evmBalances = { eth: 0n, usdc: 20_000_000n, aUsdc: 0n };
@@ -600,6 +629,36 @@ test("aave refuses without gas or funds, a second open EVM proposal, and bad inp
   state.evmBalances = undefined;
   await runCommand("aave", ctx(["withdraw", "all"]));
   assert.match((await runCommand("aave", ctx(["withdraw", "1"]))).text, /still open/);
+});
+
+test("aave supplies ETH through Aave's gateway, and withdraws it after approving the aWETH", async () => {
+  linked();
+  const { decodeFunctionData, parseAbi } = await import("viem");
+  const gateway = parseAbi(["function depositETH(address,address,uint16) payable", "function withdrawETH(address,uint256,address)", "function approve(address,uint256)"]);
+  const args = (data) => decodeFunctionData({ abi: gateway, data }).args.map((a) => (typeof a === "string" ? a.toLowerCase() : a));
+  const proposedTxs = () => realEvm.txsIn(calls.filter((c) => c[0] === "propose").at(-1)[2]).txs.map(realEvm.parseTx);
+
+  state.evmBalances = { eth: 10n ** 16n, usdc: 0n, aUsdc: 0n, aWeth: 0n };
+  await runCommand("aave", ctx(["supply", "0.005", "eth"]));
+  const [deposit] = proposedTxs();
+  assert.equal(deposit.to, "0x00000000000000000000000000000000000000c4");
+  assert.equal(deposit.value, 5n * 10n ** 15n, "the ETH goes with the call");
+  assert.deepEqual(args(deposit.data), ["0x00000000000000000000000000000000000000c3", "0x00000000000000000000000000000000000000aa", 0]);
+  assert.match(realEvm.readable(calls.at(-1)[2]), /^Supply 0\.005 ETH to Aave/);
+
+  state.proposals = [];
+  state.evmBalances = { eth: 10n ** 16n, usdc: 0n, aUsdc: 0n, aWeth: 3n * 10n ** 15n };
+  await runCommand("aave", ctx(["withdraw", "all", "ETH"]));
+  const [approve, withdraw] = proposedTxs();
+  const max = 2n ** 256n - 1n;
+  assert.equal(approve.to, "0x00000000000000000000000000000000000000c5");
+  assert.deepEqual(args(approve.data), ["0x00000000000000000000000000000000000000c4", max]);
+  assert.deepEqual(args(withdraw.data), ["0x00000000000000000000000000000000000000c3", max, "0x00000000000000000000000000000000000000aa"]);
+
+  state.proposals = [];
+  state.evmBalances = { eth: 10n ** 15n, usdc: 0n, aUsdc: 0n, aWeth: 0n };
+  assert.match((await runCommand("aave", ctx(["supply", "0.001", "ETH"]))).text, /needs 0\.001 ETH plus up to .* for gas, and has 0\.001 ETH/);
+  assert.match((await runCommand("aave", ctx(["supply", "1", "DOGE"]))).text, /USDC or ETH/);
 });
 
 test("paychain can pay the DAO's own EVM address", async () => {

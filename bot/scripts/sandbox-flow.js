@@ -10,7 +10,7 @@
 // Voting periods are a minute; the script moves the sandbox's clock forward
 // instead of waiting.
 import assert from "node:assert/strict";
-import { services, RUN, account, link, run, rpc, advance, step, near, propose, pass } from "./sandbox-lib.js";
+import { services, RUN, account, link, chatId, run, rpc, advance, step, near, propose, pass } from "./sandbox-lib.js";
 
 const { nearToYocto, yoctoToNear } = await import("near-api-js");
 const { OPERATOR_ACCOUNT_ID } = await import("../src/config.js");
@@ -198,11 +198,16 @@ if (process.env.CHAIN_SIGNER_ID) {
   const realEvm = await import("../src/near/evm.js");
   const { parseTransaction, recoverTransactionAddress, decodeFunctionData } = await import("viem");
   const sent = [];
+  let baseDown = false;
   services.evm = {
     ...realEvm,
     txParams: async () => ({ nonce: 0, maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 1_000_000n }),
-    balances: async () => ({ eth: 10n ** 16n, usdc: 20_000_000n, aUsdc: 0n }),
+    balances: async () => ({ eth: 10n ** 16n, usdc: 20_000_000n, aUsdc: 0n, aWeth: 0n }),
     broadcast: async (chain, signed) => {
+      if (baseDown) {
+        baseDown = false;
+        throw new Error("Base is down");
+      }
       sent.push(signed);
       return `0x${"0".repeat(63)}${sent.length}`;
     },
@@ -226,6 +231,35 @@ if (process.env.CHAIN_SIGNER_ID) {
   assert.deepEqual([args[0].toLowerCase(), args[1], args[2].toLowerCase()], [chain.usdc.toLowerCase(), 5_000_000n, address.toLowerCase()]);
   console.log(`  ✔ two transactions signed by the DAO's address ${address} through its proposal: approve, then supply 5 USDC to Aave on its behalf`);
 
+  step("Aave: supply 0.002 ETH through Aave's gateway, while the RPC gives up waiting for the signatures and Base fails once");
+  // The RPC stops waiting once the transaction is sent, as a slow signing network can make it do:
+  // the bot then reads the execution's outcome by its hash.
+  const ethId = await propose("aave supply 0.002 ETH");
+  for (const u of [1, 2, 3]) await run(u, `vote ${ethId} for`);
+  await advance(2.5);
+  const { provider } = await import("../src/near/client.js");
+  const realSend = provider.sendTransactionUntil.bind(provider);
+  let timedOut = 0;
+  provider.sendTransactionUntil = async (signed, waitUntil) => {
+    // Only the execution (a call to the orbit) times out; the bot's other transactions go through.
+    if (signed.transaction.receiverId !== link().orbitId) return realSend(signed, waitUntil);
+    provider.sendTransactionUntil = realSend;
+    realSend(signed, "INCLUDED").catch(() => {});
+    timedOut++;
+    throw new Error("Request timed out");
+  };
+  baseDown = true;
+  sent.length = 0;
+  await run(3, `execute ${ethId}`, { expect: /Transaction 1 wasn't sent: Base is down[\s\S]*`\/execute \d+` tries sending again/ });
+  assert.equal(timedOut, 1, "the execution's RPC wait gave up");
+  await run(3, `execute ${ethId}`, { expect: /executed earlier; sending what it signed[\s\S]*Sent on Base Sepolia/ });
+  const [deposit] = sent.map((raw) => parseTransaction(raw));
+  assert.equal((await recoverTransactionAddress({ serializedTransaction: sent[0] })).toLowerCase(), address.toLowerCase());
+  assert.equal(deposit.to.toLowerCase(), chain.wethGateway.toLowerCase());
+  assert.equal(deposit.value, 2n * 10n ** 15n);
+  await run(3, `execute ${ethId}`, { expect: /already executed/ });
+  console.log("  ✔ the outcome was read by hash after the RPC gave up; the second /execute sent the signed depositETH (0.002 ETH to Aave's gateway)");
+
   step("Hyperliquid: appoint a trading agent by proposal; the DAO's key signs Hyperliquid's approveAgent");
   // Hyperliquid's API isn't reachable from a sandbox: the post is stood in for, after the same signature check.
   const realHl = await import("../src/near/hyperliquid.js");
@@ -247,6 +281,28 @@ if (process.env.CHAIN_SIGNER_ID) {
   assert.deepEqual([accepted[0].action.type, accepted[0].action.agentAddress, accepted[0].action.agentName], ["approveAgent", agent, "desk"]);
   assert.equal(accepted[0].signer.toLowerCase(), address.toLowerCase());
   console.log(`  ✔ the DAO's address signed approveAgent for ${agent} ("desk"): it can trade for the DAO, never withdraw`);
+}
+
+step("Notifications: the bot posts in the chat when voting ends and the proposal can execute");
+{
+  const { scanChat } = await import("../src/platforms/notifier.js");
+  const posted = [];
+  // The sandbox's clock runs ahead of this machine's (it's fast-forwarded): read the time from the chain.
+  const chainNow = async () => BigInt((await rpc("block", { finality: "final" })).header.timestamp);
+  const notify = async () => scanChat("telegram", chatId(), link(), (c, text) => posted.push(text), (n) => `/${n}`, await chainNow());
+  const id = await propose(`pay 0.1 NEAR ${account(3)} notified payout`);
+  await notify();
+  for (const u of [1, 2, 3]) await run(u, `vote ${id} for`);
+  await notify();
+  assert.equal(posted.length, 0, "nothing while voting is open");
+  await advance(2.5);
+  await notify();
+  assert.equal(posted.length, 1);
+  assert.match(posted[0], new RegExp(`Voting ended: \\*#${id}\\* — notified payout passed and can be executed now with \`/execute ${id}\``));
+  await notify();
+  assert.equal(posted.length, 1, "posted once");
+  await run(3, `execute ${id}`, { expect: /executed/i });
+  console.log(`  ✔ the bot posted: ${posted[0]}`);
 }
 
 step("Switch to conviction, which locks stake while it backs a proposal");

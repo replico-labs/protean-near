@@ -54,6 +54,8 @@ export const account = (user) => userAccountId("telegram", tgId(user));
 let chat = "-1001";
 /** Commands go to chat `id` from now on; each DAO can have its own. */
 export const useChat = (id) => (chat = String(id));
+/** The current chat's id. */
+export const chatId = () => chat;
 /** The current chat's DAO link. */
 export const link = () => links[`telegram:${chat}`];
 

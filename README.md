@@ -130,7 +130,7 @@ Each action below is an ordinary proposal: members vote on it like any other, an
 | **Swaps** (`/swap`) | On [Rhea Finance](https://rhea.finance/). The proposal fixes a minimum output, so a swap reverts rather than fill at a worse price. |
 | **Liquid staking** (`/liquidstake`) | With LiNEAR, Meta Pool or Stader (NearX). The DAO holds the liquid token, and unstaking follows each provider's delay. |
 | **Buying tokens on other chains** (`/buy`), **paying anyone on 30+ chains** (`/paychain`) | Through [NEAR Intents](https://docs.near-intents.org/). The bot fetches a live quote and proposes depositing into it, but only when the quote outlasts the proposal's execution window: depositing into an expired quote can lose funds. If the price moves past the slippage, the deposit is refunded to the DAO's own NEAR Intents account, and `/intentswithdraw` brings it back. |
-| **Aave on Base** (`/aave`) | Through [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures), each DAO has its own EVM address, which only its proposals can sign for (`/evm`). The proposal carries the unsigned Base transactions in its description, so anyone can check what the DAO is signing. On execution, NEAR's signing network signs them; the bot checks each signature recovers to the DAO's address, then sends them. |
+| **Aave on Base** (`/aave`) | Supply or withdraw USDC or ETH. Through [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures), each DAO has its own EVM address, which only its proposals can sign for (`/evm`). The proposal carries the unsigned Base transactions in its description, so anyone can check what the DAO is signing. On execution, NEAR's signing network signs them; the bot checks each signature recovers to the DAO's address, then sends them. If sending fails, the signatures stay valid and `/execute` again finishes the job. |
 | **Hyperliquid perps** | The same address is the DAO's Hyperliquid account, funded through NEAR Intents (`/paychain 500 USDC@hypercore dao …`). Voting on every order would be too slow, so the DAO appoints a trading agent by proposal (`/hlagent`): a trader, a bot or an AI agent that can trade for the DAO but never withdraw. Revoking it (`/hlrevoke`) and moving USDC out (`/hlsend`) each take a proposal. |
 
 `/treasury` lists everything the DAO holds: NEAR, its token, swapped
@@ -203,7 +203,8 @@ bot/                       Telegram and Discord bot (Node)
   src/platforms/commands/  the commands, one file per topic, shared by both platforms
   src/near/                NEAR: accounts, orbit, staking, Sputnik, integrations
   scripts/                 publish contracts, deploy the factory, local node runs
-docs/                      SPEC.md (design), sandbox.md (local node), testnet-check.md
+docs/                      SPEC.md (design), sandbox.md (local node), hosting.md, testnet-check.md
+Dockerfile, railway.json   hosting the bot
 supabase/schema.sql        the bot's database
 ```
 
@@ -231,7 +232,7 @@ Expect 70 tests to pass. Among other things, they show that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 52`. The commands run against a fake chain.
+Expect `pass 57`. The commands run against a fake chain.
 
 ### 3. A local NEAR node
 
@@ -268,8 +269,11 @@ node scripts/publish-contracts.js --yes  # publishes all (or name some models)
 node scripts/deploy-factory.js           # shows the cost (~49 NEAR, once)
 node scripts/deploy-factory.js --yes     # then set SPUTNIK_FACTORY_ID and DAO_CREATE_DEPOSIT=0.1
 
-npm run telegram                         # or: npm run discord
+npm start                                # Telegram, and Discord if its token is set
 ```
+
+To keep the bot running without your computer, host it: the repository
+includes a `Dockerfile` and a Railway config. See [docs/hosting.md](docs/hosting.md).
 
 In a Telegram group, with the bot as a group admin:
 
@@ -297,7 +301,7 @@ Voting periods default to an hour so a whole lifecycle fits in a demo;
 | Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
 | Treasury | `/swap <amount> <from> <to> [slippage%]` (on Rhea) · `/liquidstake <amount> [linear\|metapool\|nearx]` · `/liquidunstake <amount> [provider]` · `/liquidwithdraw [provider]` |
 | NEAR Intents | `/buy <amount> <from> <to>[@chain] [slippage%]` · `/paychain <amount> <token>@<chain> <address> <description>` · `/intentsstatus <id>` · `/intentswithdraw <amount> <token>` |
-| EVM (Chain Signatures) | `/evm` · `/aave supply\|withdraw <amount\|all>` (Aave on Base) |
+| EVM (Chain Signatures) | `/evm` · `/aave supply\|withdraw <amount\|all> [USDC\|ETH]` (Aave on Base) |
 | Hyperliquid | `/hyperliquid` · `/hlagent <address> [name]` · `/hlrevoke [name]` · `/hlsend <amount> <address>` |
 | Deciding | `/vote <id> for\|against\|abstain` · `/execute <id>` · `/cancel <id>` |
 | Optimistic | `/challenge <id>` · `/resolvechallenge <id>` |
@@ -313,6 +317,10 @@ A chat without a DAO sees just `/help`, `/createdao`, `/link`, `/wallet` and
 `/send`. Accounts can be written as `me`. Replies link user and treasury
 addresses to the explorer, next to the address itself, which can be tapped
 to copy.
+
+The bot also posts on its own when voting on a proposal ends, when a
+passed proposal can be executed (with an Execute button), when its
+execution window is about to close, and when it expires.
 
 Each command is defined once, in `bot/src/platforms/commands/`, and both
 Telegram and Discord run it.

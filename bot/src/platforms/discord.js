@@ -3,6 +3,7 @@ import "../logRedaction.js";
 import { Client, Events, GatewayIntentBits, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { COMMANDS, ADMIN_COMMANDS, runCommand } from "./commands.js";
 import { encodeButton, decodeButton, BUTTON_COMMANDS } from "../buttons.js";
+import { startNotifier } from "./notifier.js";
 
 /**
  * Discord front-end for the shared commands (commands.js).
@@ -165,7 +166,19 @@ export async function startDiscordBot({ token, applicationId, guildId } = {}) {
   client.on(Events.InteractionCreate, (interaction) => {
     handleInteraction(interaction).catch((err) => console.error("[discord] Interaction failed:", err));
   });
-  client.once(Events.ClientReady, (c) => console.log(`[discord] Logged in as ${c.user.tag}`));
+  client.once(Events.ClientReady, (c) => {
+    console.log(`[discord] Logged in as ${c.user.tag}`);
+    startNotifier(
+      "discord",
+      async (channelId, text, buttons) => {
+        const channel = await client.channels.fetch(channelId);
+        const [first, ...more] = splitForDiscord(toDiscordMarkdown(text));
+        await channel.send({ content: first, components: discordComponents(buttons) });
+        for (const content of more) await channel.send({ content });
+      },
+      cmd,
+    );
+  });
   await client.login(token);
   return client;
 }

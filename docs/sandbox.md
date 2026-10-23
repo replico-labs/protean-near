@@ -83,6 +83,8 @@ Expect `All checks passed.` after these steps:
 | `/evm` | The DAO's EVM address, derived from its account by the signer |
 | `/hlagent <address> desk` | The DAO's key signs Hyperliquid's approveAgent; the signature recovers to the DAO's address (the post to Hyperliquid's API is stood in for) |
 | `/aave supply 5` | Executing signs approve and supply; both recover to the DAO's address and supply 5 USDC to Aave on its behalf. Base itself can't be reached from a sandbox, so its nonce, fees, balances and the final send are stood in for |
+| `/aave supply 0.002 ETH` | One transaction to Aave's ETH gateway, carrying the ETH. The RPC is made to give up while the signer answers, so the bot reads the execution by its hash; the send to Base is made to fail once, and a second `/execute` sends what was signed |
+| Notifications | When voting on a proposal ends and it can execute, the bot posts once in the chat, with the `/execute` command |
 
 `sandbox-models.js` gives each model its own DAO and chat:
 

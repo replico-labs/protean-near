@@ -1,4 +1,5 @@
-import { Account, JsonRpcProvider, FailoverRpcProvider, actions } from "near-api-js";
+import { createHash } from "node:crypto";
+import { Account, JsonRpcProvider, FailoverRpcProvider, actions, baseEncode, encodeTransaction } from "near-api-js";
 import { RPC_URLS, OPERATOR_ACCOUNT_ID, OPERATOR_PRIVATE_KEY, MAX_GAS } from "../config.js";
 
 /**
@@ -58,20 +59,60 @@ export async function call(account, contractId, methodName, args = {}, { deposit
   }
 }
 
+// Errors that say nothing about the transaction itself: the RPC gave up
+// waiting, rate-limited us, or the connection dropped.
+const TRANSPORT_ERROR = /timeout|timed out|fetch failed|socket|ECONNRESET|ETIMEDOUT|429|too many|RetriesExceeded|Exceeded \d+ providers|5\d\d|bad gateway|unavailable/i;
+// The signing network answers in 10-30 seconds; give a late outcome this long.
+const OUTCOME_WAIT_MS = 3 * 60_000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Like `call`, but returns the transaction's whole outcome, every receipt it
  * led to included: where results of calls the contract made can be read
- * (Chain Signatures signatures, for one).
+ * (Chain Signatures signatures, for one). The outcome carries `txHash`, and
+ * `onSent(txHash)` hears it before the wait. If the RPC stops waiting before
+ * the transaction finishes, the outcome is fetched by hash instead.
  */
-export async function callWithOutcome(account, contractId, methodName, args = {}, { deposit = 0n, gas = MAX_GAS } = {}) {
-  let outcome;
-  try {
-    outcome = await account.signAndSendTransaction({ receiverId: contractId, actions: [actions.functionCall(methodName, args, gas, deposit)] });
-  } catch (err) {
-    throw new ChainError(err);
+export async function callWithOutcome(account, contractId, methodName, args = {}, { deposit = 0n, gas = MAX_GAS, onSent } = {}) {
+  const action = actions.functionCall(methodName, args, gas, deposit);
+  let outcome, txHash;
+  for (let attempt = 0; !outcome; attempt++) {
+    let signed;
+    try {
+      signed = await account.createSignedTransaction({ receiverId: contractId, actions: [action] });
+    } catch (err) {
+      throw new ChainError(err);
+    }
+    txHash = baseEncode(createHash("sha256").update(encodeTransaction(signed.transaction)).digest());
+    await onSent?.(txHash);
+    try {
+      outcome = await provider.sendTransactionUntil(signed, "EXECUTED_OPTIMISTIC");
+    } catch (err) {
+      const text = `${err?.type ?? ""} ${err?.name ?? ""} ${err?.message ?? err}`;
+      if (/InvalidNonce/i.test(text) && attempt < 3) {
+        // Another transaction from this key took the nonce: sign again with a fresh one.
+        await account.nonceManager?.invalidate?.(signed.transaction.publicKey);
+        continue;
+      }
+      if (!TRANSPORT_ERROR.test(text)) throw new ChainError(err);
+      outcome = await transactionOutcome(txHash, account.accountId);
+    }
   }
   if (outcome.status?.Failure) throw new ChainError(new Error(JSON.stringify(outcome.status.Failure)));
-  return outcome;
+  return Object.assign(outcome, { txHash });
+}
+
+/** The whole outcome of transaction `txHash` sent by `accountId`, waiting up to `waitMs` for it to finish. */
+export async function transactionOutcome(txHash, accountId, waitMs = OUTCOME_WAIT_MS) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try {
+      return await provider.viewTransactionStatusWithReceipts({ txHash, accountId, waitUntil: "EXECUTED_OPTIMISTIC" });
+    } catch (err) {
+      if (Date.now() > until) throw new ChainError(err);
+      await sleep(3000);
+    }
+  }
 }
 
 /** A failed call, with the contract's error code (e.g. ERR_ALREADY_VOTED) when it panicked with one. */

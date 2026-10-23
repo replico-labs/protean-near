@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "node src/main.js",
     "telegram": "node src/platforms/telegram.js",
     "discord": "node src/platforms/discord.js",
     "test": "node --test"

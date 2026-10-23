@@ -63,7 +63,7 @@ export function vote(account, orbitId, id, choice) {
 export const execute = (account, orbitId, id) => call(account, orbitId, "execute", { id: Number(id) });
 export const cancel = (account, orbitId, id) => call(account, orbitId, "cancel", { id: Number(id) });
 /** Executes, returning the whole outcome (for proposals whose results the bot reads, like signatures). */
-export const executeWithOutcome = (account, orbitId, id) => callWithOutcome(account, orbitId, "execute", { id: Number(id) });
+export const executeWithOutcome = (account, orbitId, id, options) => callWithOutcome(account, orbitId, "execute", { id: Number(id) }, options);
 
 // --- Liquid ---
 

@@ -19,6 +19,9 @@ const CHAINS = {
       usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       aavePool: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
       aUsdc: "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
+      // Aave's gateway wraps ETH to WETH and supplies it, and the reverse.
+      wethGateway: "0xa0d9C1E9E48Ca30c8d8C3B5D69FF5dc1f6DFfC24",
+      aWeth: "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7",
     },
     testnet: {
       chainId: 84532,
@@ -26,6 +29,8 @@ const CHAINS = {
       usdc: "0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f",
       aavePool: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
       aUsdc: "0x10F1A9D11CDf50041f3f8cB7191CBE2f31750ACC",
+      wethGateway: "0x0568130e794429D2eEBC4dafE18f25Ff1a1ed8b6",
+      aWeth: "0x73a5bB60b0B0fc35710DDc0ea9c407031E31Bdbb",
     },
   },
 };
@@ -64,6 +69,11 @@ const AAVE_POOL = [
   },
 ];
 
+const WETH_GATEWAY = [
+  { type: "function", name: "depositETH", stateMutability: "payable", inputs: [{ name: "pool", type: "address" }, { name: "onBehalfOf", type: "address" }, { name: "referralCode", type: "uint16" }], outputs: [] },
+  { type: "function", name: "withdrawETH", stateMutability: "nonpayable", inputs: [{ name: "pool", type: "address" }, { name: "amount", type: "uint256" }, { name: "to", type: "address" }], outputs: [] },
+];
+
 /** ETH (wei) and a token's balance (raw units) of `address` on `chain`. */
 export async function balances(chain, address, tokens) {
   const eth = BigInt(await rpc(chain, "eth_getBalance", [address, "latest"]));
@@ -86,6 +96,22 @@ export function aaveSupplyCalls(chain, owner, amount) {
 /** Aave: withdraw `amount` USDC (null: everything) to `owner`. */
 export function aaveWithdrawCalls(chain, owner, amount) {
   return [{ to: chain.aavePool, data: encodeFunctionData({ abi: AAVE_POOL, functionName: "withdraw", args: [chain.usdc, amount ?? maxUint256, owner] }), gas: 350_000n }];
+}
+
+/** Aave: supply `amount` ETH (wei) on behalf of `owner`, through the gateway, which wraps it. */
+export function aaveSupplyEthCalls(chain, owner, amount) {
+  return [{ to: chain.wethGateway, data: encodeFunctionData({ abi: WETH_GATEWAY, functionName: "depositETH", args: [chain.aavePool, owner, 0] }), value: amount, gas: 300_000n }];
+}
+
+/**
+ * Aave: withdraw `amount` ETH (null: everything) to `owner`. The gateway
+ * takes the aWETH back, so it's approved for it first.
+ */
+export function aaveWithdrawEthCalls(chain, owner, amount) {
+  return [
+    { to: chain.aWeth, data: encodeFunctionData({ abi: ERC20, functionName: "approve", args: [chain.wethGateway, amount ?? maxUint256] }), gas: 80_000n },
+    { to: chain.wethGateway, data: encodeFunctionData({ abi: WETH_GATEWAY, functionName: "withdrawETH", args: [chain.aavePool, amount ?? maxUint256, owner] }), gas: 400_000n },
+  ];
 }
 
 /**

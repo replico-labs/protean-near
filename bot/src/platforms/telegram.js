@@ -5,6 +5,7 @@ import { run, sequentialize } from "@grammyjs/runner";
 import { COMMANDS, ADMIN_COMMANDS, runCommand, commandsFor } from "./commands.js";
 import { services } from "./services.js";
 import { decodeButton, BUTTON_COMMANDS, telegramKeyboard } from "../buttons.js";
+import { startNotifier } from "./notifier.js";
 
 /**
  * Telegram front-end for the shared commands (commands.js).
@@ -160,6 +161,17 @@ export function createTelegramBot(token) {
   return bot;
 }
 
+/** A message the bot posts on its own (notifications), Markdown first as in send(). */
+async function postToChat(api, chatId, text, buttons) {
+  const extra = buttons?.length ? { reply_markup: telegramKeyboard(buttons) } : {};
+  try {
+    await api.sendMessage(chatId, text, { parse_mode: "Markdown", ...extra });
+  } catch (err) {
+    if (!(err instanceof GrammyError && /can't parse entities/i.test(err.description))) throw err;
+    await api.sendMessage(chatId, text, extra);
+  }
+}
+
 export async function startTelegramBot(token) {
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required.");
   const bot = createTelegramBot(token);
@@ -168,6 +180,7 @@ export async function startTelegramBot(token) {
   for (const [chatId, link] of services.db.chatsOn("telegram")) await syncChatMenu(bot.api, chatId, link);
   const runner = run(bot);
   console.log(`[telegram] Running as @${(await bot.api.getMe()).username}`);
+  startNotifier("telegram", (chatId, text, buttons) => postToChat(bot.api, chatId, text, buttons), cmd);
   return runner;
 }
 
