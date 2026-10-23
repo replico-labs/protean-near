@@ -39,3 +39,9 @@ export const NEW_ACCOUNT_NEAR = process.env.NEW_ACCOUNT_NEAR || "0.05";
 export const MIN_ACCOUNT_NEAR = process.env.MIN_ACCOUNT_NEAR || "0.02";
 
 export const MAX_GAS = 300_000_000_000_000n;
+/**
+ * For a call that makes no calls of its own (a storage deposit, a plain
+ * token transfer). NEAR holds attached gas at ten times its price until the
+ * call ends, so a small call keeps 0.03 NEAR busy instead of MAX_GAS's 0.3.
+ */
+export const SIMPLE_GAS = 30_000_000_000_000n;

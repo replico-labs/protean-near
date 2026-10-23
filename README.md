@@ -1,33 +1,112 @@
 # Protean on NEAR
 
-Protean turns a group chat into a DAO. This repository is Protean's NEAR
-version: the **Orbits** contracts, and the Protean bot for Telegram and
-Discord.
+Protean turns a group chat into a DAO. A Telegram or Discord group creates a
+DAO with one command, holds a treasury on NEAR, and decides what to do with
+it by proposal: pay people, swap and stake its funds, buy tokens on other
+chains, supply to Aave on Base, or trade perps on Hyperliquid through an
+appointed agent. When the group's needs change, it switches its governance
+model by proposal, without moving its treasury.
 
-**Orbits** is a modular NEAR governance framework that provides
-interchangeable governance modules for Sputnik DAO, for building and evolving
-onchain organizations. Communities can swap their governance model by
-proposal without moving their treasury.
+This repository holds both halves:
 
-> Status: contracts and bot are tested locally and run end to end on a
-> local NEAR node (docs/sandbox.md). They haven't run on testnet yet.
+- **Orbits**, the NEAR contracts: interchangeable governance modules for
+  Sputnik DAO.
+- **The Protean bot**, which runs the DAO from the chat.
+
+> Status: the contracts are published on NEAR testnet
+> (`orbits/deployments/testnet.json`). Everything runs end to end on a local
+> NEAR node (`docs/sandbox.md`): the full flow, every governance model, and
+> every integration.
 
 ## How it works
 
-- **Core:** an unmodified Sputnik DAO, created through the official factory.
-  It holds the treasury and executes proposals.
-- **Orbit:** the governance module, one contract per model. It's the core's only member: people
-  propose and decide in the orbit under its model, and when a proposal passes
-  the orbit's single vote executes it on the core.
-- **Staking:** one staking contract per DAO, owned by the core. Every orbit
-  reads stake from it by snapshot, so members keep their stake when the DAO
-  switches models.
-- **Switch:** one proposal hands the core to a new orbit running another
-  model. The treasury and stakes never move.
+### The big picture
+
+```
+ Telegram / Discord group
+     │  /createdao  /pay  /vote  /execute  /swap  /buy  /aave ...
+     ▼
+ Protean bot ── signs each action with the member's own NEAR account
+     │
+     ▼
+ Member accounts (tg123456.protean.testnet)
+     │ stake                           │ propose, vote
+     ▼                                 ▼
+ ┌───────────┐   reads stake   ┌──────────────┐  its only member  ┌────────────┐
+ │  Staking  │◀────────────────│    Orbit     │──────────────────▶│    Core    │
+ │ (per DAO) │   by snapshot   │ (governance  │   adds + approves │ (Sputnik,  │
+ └───────────┘                 │   module)    │   what passed     │  treasury) │
+       ▲                       └──────────────┘                   └─────┬──────┘
+ ┌───────────┐                                                          │ executes
+ │   Token   │                                                          ▼
+ └───────────┘          Rhea · liquid staking · NEAR Intents · Chain Signatures
+                                              │
+                                              ▼
+                    Other chains: BTC, Solana… · Aave on Base · Hyperliquid
+```
+
+### The pieces
+
+| Piece | What it is |
+| --- | --- |
+| **Core** | An unmodified [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract). It holds the treasury and executes proposals. Its one governance member is the orbit, so nothing reaches the treasury except what governance passed. |
+| **Orbit** | The governance module: one contract per model, nine in all. Members propose and decide in the orbit under its rules; when a proposal passes, the orbit's single vote executes it on the core. |
+| **Staking** | One per DAO, owned by the core. Members stake the DAO's token here, and stake is voting weight. Every orbit reads it by snapshot, so stakes survive a model switch. |
+| **Token** | The DAO's own fixed-supply token (NEP-141). Whoever creates the DAO receives the whole supply and distributes it. |
+| **Factory** | Creates each core. Protean runs its own copy of Sputnik's newer factory (`sputnik.protean.testnet`); the official one works too. |
+| **Bot** | Turns chat commands into NEAR transactions, signed by each member's own account. It holds no special power over any DAO. |
+
+### A DAO's accounts
+
+A DAO called `ark`, running token-weighted governance, gets:
+
+| Account | Role |
+| --- | --- |
+| `ark.sputnik.protean.testnet` | The core and treasury |
+| `token.ark.protean.testnet` | The ARK token |
+| `staking.ark.protean.testnet` | Stakes and their history |
+| `tw.ark.protean.testnet` | The orbit (`tw` token-weighted, `qv` quadratic, `lq` liquid, `op` optimistic, `cv` conviction, `dg` delegate, `st` sortition, `sw` sowellian, `dm` decision markets) |
+
+Each chat member gets an account too: `tg<Telegram user id>.protean.testnet`
+(`dc…` on Discord).
+
+None of these contract accounts has an access key, and their code is shared
+by hash, as NEAR global contracts. Nobody can change a DAO's contracts,
+Protean included.
+
+### Life of a proposal
+
+1. **Propose.** `/pay 1 NEAR <account> design work` asks the orbit to store
+   a Sputnik proposal, here a `Transfer`. The orbit checks first that the
+   proposal can't break the DAO (see *Safety*).
+2. **Decide.** Members vote under the orbit's model. Each member's weight
+   is their stake at the moment the proposal was made, so tokens can't be
+   moved around to vote twice.
+3. **Wait out the timelock.** A passed proposal can't execute straight away,
+   which gives members time to see it coming.
+4. **Execute.** Anyone runs `/execute`. The orbit adds the proposal to the
+   core and approves it with its single vote; Sputnik executes it at once.
+   A proposal reaches the core exactly once, and a send that fails partway
+   can be retried safely.
+
+A defeated, cancelled or expired proposal never reaches the treasury.
+
+### Switching models
+
+`/switchmodel quadratic` creates a new orbit running the new model and
+proposes handing it the core. The proposal goes through the current
+model's own rules. If it passes, a single policy change on the core swaps
+the old orbit for the new one. Before approving, the old orbit checks that
+the new one really belongs to this DAO.
+
+The treasury and the stakes never move. Proposals still open in the old
+orbit can't execute after the switch.
+
+### The governance models
 
 | Model | How it decides |
 | --- | --- |
-| `board` | Named members approve directly on the DAO by majority (Sputnik's own multisig, no orbit) |
+| `board` | Named members approve directly on the core by majority (Sputnik's own multisig, no orbit) |
 | `tokenWeighted` | One staked token, one vote; quorum and approval thresholds, timelock |
 | `quadratic` | Voting weight is the square root of stake |
 | `liquid` | Vote directly, or delegate; delegated weight follows the chain to whoever voted |
@@ -39,9 +118,74 @@ proposal without moving their treasury.
 | `decisionMarkets` | Each proposal gets pass and fail markets; the one pricing the token higher over the window decides |
 
 The rules follow Protean's EVM contracts
-([Spaces](https://github.com/replico-labs/Spaces)). Because the core is plain
-Sputnik, a Protean DAO also works in Sputnik tools such as Trezu. Design:
+([Spaces](https://github.com/replico-labs/Spaces)). Full rules:
 [docs/SPEC.md](docs/SPEC.md).
+
+### Putting the treasury to work
+
+Each action below is an ordinary proposal: members vote on it like any other, and nothing moves until it passes.
+
+| | How it works |
+| --- | --- |
+| **Swaps** (`/swap`) | On [Rhea Finance](https://rhea.finance/). The proposal fixes a minimum output, so a swap reverts rather than fill at a worse price. |
+| **Liquid staking** (`/liquidstake`) | With LiNEAR, Meta Pool or Stader (NearX). The DAO holds the liquid token, and unstaking follows each provider's delay. |
+| **Buying tokens on other chains** (`/buy`), **paying anyone on 30+ chains** (`/paychain`) | Through [NEAR Intents](https://docs.near-intents.org/). The bot fetches a live quote and proposes depositing into it, but only when the quote outlasts the proposal's execution window: depositing into an expired quote can lose funds. If the price moves past the slippage, the deposit is refunded to the DAO's own NEAR Intents account, and `/intentswithdraw` brings it back. |
+| **Aave on Base** (`/aave`) | Through [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures), each DAO has its own EVM address, which only its proposals can sign for (`/evm`). The proposal carries the unsigned Base transactions in its description, so anyone can check what the DAO is signing. On execution, NEAR's signing network signs them; the bot checks each signature recovers to the DAO's address, then sends them. |
+| **Hyperliquid perps** | The same address is the DAO's Hyperliquid account, funded through NEAR Intents (`/paychain 500 USDC@hypercore dao …`). Voting on every order would be too slow, so the DAO appoints a trading agent by proposal (`/hlagent`): a trader, a bot or an AI agent that can trade for the DAO but never withdraw. Revoking it (`/hlrevoke`) and moving USDC out (`/hlsend`) each take a proposal. |
+
+`/treasury` lists everything the DAO holds: NEAR, its token, swapped
+tokens, staked NEAR, and its NEAR Intents balances.
+
+### Accounts, keys and who pays
+
+- **Member accounts are custodial.** The bot creates each member's account
+  on first use. It generates the key and stores it encrypted with AWS KMS in
+  Supabase, as Protean's EVM bot does, under the encryption context
+  `{"app": "protean-near"}`.
+- **The operator account (`protean.testnet`) pays the running costs:**
+  - creating member accounts;
+  - gas for every action;
+  - storage registrations;
+  - creating DAOs.
+
+  Members never need NEAR of their own to take part.
+- **About 0.38 NEAR sits in each active member's account.** NEAR holds a
+  call's attached gas up front, at ten times the gas price, and refunds what
+  isn't used a block later. The bot keeps enough in each account for that
+  hold, and the hold comes back after every call. Only the gas actually used
+  is spent, about 0.001–0.005 NEAR per action.
+- **Tokens:** the DAO's creator holds the whole supply at first. They pass
+  it on with `/send`, or `/tip` as a reply to someone's message. Members
+  `/stake` to get voting weight.
+
+### Safety
+
+- **Nobody can change a DAO's contracts.** Contract accounts have no keys,
+  and their code is fixed by hash. A new version is a new hash, which a DAO
+  adopts only by switching models by proposal.
+- **The treasury only does what governance passed.** The core's sole member
+  is the orbit, and the core has no open "anyone can propose" role.
+- **Governance can't be broken by accident.** Every orbit refuses proposals
+  that would:
+  - replace the core's policy;
+  - remove or reshape its governance role, except by a proper swap;
+  - set a proposal bond or a proposal period under an hour.
+- **Votes can't count twice.** Stake is read at each proposal's snapshot,
+  and conviction locks the stake that backs a proposal.
+- **Money leaving NEAR is checked:**
+  - Intents deposits only go into quotes that outlive the proposal;
+  - EVM and Hyperliquid signatures must recover to the DAO's own address
+    before anything is sent.
+
+### Costs
+
+| | NEAR |
+| --- | --- |
+| Publish the nine modules, staking and token (once per network) | ~255 (2.55 MB at 10× normal storage) |
+| Protean's Sputnik factory (once per network) | ~49 |
+| Each DAO, through Protean's factory | ~0.6 (~6.6 through `sputnikv2.testnet`, which still stores a full copy of the DAO code in each DAO) |
+| A model switch | ~0.25 for the new orbit |
+| Each active member | ~0.38 held for gas (returned after every call), plus ~0.01 staking storage |
 
 ## Repository layout
 
@@ -53,11 +197,12 @@ orbits/                    Rust contracts (Cargo workspace)
   orbit-common/            which proposals may reach the core; the calls to it
   governance-token/        fixed-supply NEP-141 token
   core-tests/              checks against the real Sputnik contract
+  testing/mock-signer/     a stand-in Chain Signatures signer for local runs
   deployments/             published code hashes, per network
 bot/                       Telegram and Discord bot (Node)
-  src/platforms/commands/  the commands, shared by both platforms
-  src/near/                NEAR: accounts, orbit, staking, Sputnik, deployment
-  scripts/                 publish the contracts; create a DAO from the shell
+  src/platforms/commands/  the commands, one file per topic, shared by both platforms
+  src/near/                NEAR: accounts, orbit, staking, Sputnik, integrations
+  scripts/                 publish contracts, deploy the factory, local node runs
 docs/                      SPEC.md (design), sandbox.md (local node), testnet-check.md
 supabase/schema.sql        the bot's database
 ```
@@ -70,17 +215,13 @@ supabase/schema.sql        the bot's database
 cd orbits && cargo test
 ```
 
-Expect every suite to pass (70 tests). They show, among others, that:
+Expect 70 tests to pass. Among other things, they show that:
 
 - a Sputnik DAO whose only member is an orbit executes what the orbit passes,
   refuses everyone else, and moves to a new orbit in one proposal;
-- each model decides like its Spaces counterpart: quorum and approval,
-  square-root weights, delegation chains, challenge bonds, conviction,
-  elections and recalls, random draws, outcome bets with disputes and
-  adjudication, and pass/fail markets decided by time-weighted price;
+- each model decides like its Spaces counterpart;
 - a passed proposal reaches the DAO exactly once, and only after its
   timelock;
-- stake is read by snapshot, and locks block unstaking;
 - every proposal, model setting and DAO policy the bot creates works on the
   contracts (`bot/test/fixtures`).
 
@@ -90,25 +231,26 @@ Expect every suite to pass (70 tests). They show, among others, that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 48`. The commands run against a fake chain.
+Expect `pass 52`. The commands run against a fake chain.
 
-### 3. Run it on a local NEAR node
+### 3. A local NEAR node
 
-A sandbox node runs everything against real contracts, for free:
-`./bot/scripts/sandbox-prepare.sh` gets the node and every contract, then
-`sandbox-flow.js` runs a DAO's life and the integrations, and
-`sandbox-models.js` runs each governance model's own mechanics (delegation,
-challenges, elections and recalls, random councils, bets and adjudication,
-decision markets). See [docs/sandbox.md](docs/sandbox.md).
+A sandbox runs everything against the real contracts, at no cost.
+`./bot/scripts/sandbox-prepare.sh` gets the node and every contract. Then:
 
-### 4. Run it on testnet
+- `sandbox-flow.js` runs a DAO's whole life and every integration;
+- `sandbox-models.js` runs each model's own mechanics.
 
-You need a funded testnet operator account, a Telegram or Discord bot token,
-a Supabase project (run `supabase/schema.sql`) and an AWS KMS key.
-Publishing all eleven contracts costs about 255 NEAR, once per network
-(global contracts cost 10× normal storage). You can start with staking,
-the token and the modules you need, about 23-28 NEAR each, and add the
-rest later. Each DAO after that costs well under 1 NEAR.
+See [docs/sandbox.md](docs/sandbox.md).
+
+### 4. Testnet
+
+You need:
+
+- a funded operator account;
+- a Telegram or Discord bot token;
+- a Supabase project (run `supabase/schema.sql` in it);
+- an AWS KMS key.
 
 ```bash
 # Build the contracts (needs cargo-near)
@@ -117,26 +259,24 @@ for c in modules/* orbit-staking governance-token; do (cd $c && cargo near build
 
 # Configure, then publish the contracts once as global contracts
 cd ../bot
-cp ../.env.example .env        # fill it in
+cp ../.env.example .env                  # fill it in
 node scripts/publish-contracts.js        # shows the cost
-node scripts/publish-contracts.js --yes  # publishes all
-node scripts/publish-contracts.js tokenWeighted quadratic --yes  # or only some models
+node scripts/publish-contracts.js --yes  # publishes all (or name some models)
 
-# Protean's own Sputnik factory (Sputnik's code, unmodified, shared as a global
-# contract): a DAO then costs ~0.6 NEAR instead of ~6.6 with sputnikv2.testnet
+# Protean's own Sputnik factory: each DAO then costs ~0.6 NEAR
 ./scripts/build-sputnik.sh
 node scripts/deploy-factory.js           # shows the cost (~49 NEAR, once)
 node scripts/deploy-factory.js --yes     # then set SPUTNIK_FACTORY_ID and DAO_CREATE_DEPOSIT=0.1
 
-npm run telegram     # or: npm run discord
+npm run telegram                         # or: npm run discord
 ```
 
-In a Telegram group with the bot (as a group admin):
+In a Telegram group, with the bot as a group admin:
 
 | Do | See |
 | --- | --- |
 | `/createdao ark ARK 1000000` | 🏛 ark is live, with tokenWeighted governance; you hold 1,000,000 ARK |
-| `/send 1000 ARK <a member's account>` (they get theirs from `/wallet`) | ✅ Sent |
+| Reply to a member's message: `/tip 1000` | ✅ Sent 1000 ARK, with a link to the transaction |
 | Each member: `/stake 1000` | ✅ Staked |
 | `/pay 1 NEAR me test payout` | 📝 New proposal #0, with For / Against / Abstain buttons |
 | Members press **For** | 🗳 Voted for |
@@ -144,8 +284,8 @@ In a Telegram group with the bot (as a group admin):
 | `/treasury` | The DAO's NEAR balance, 1 NEAR lower |
 | `/switchmodel quadratic`, vote, execute | 🔀 The DAO now runs quadratic governance. Same treasury, same stakes |
 
-Voting periods default to an hour so a lifecycle fits in a demo; see
-`.env.example` to lengthen them.
+Voting periods default to an hour so a whole lifecycle fits in a demo;
+`.env.example` shows how to lengthen them.
 
 ## Commands
 
@@ -155,10 +295,10 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 | Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` · `/tip <amount>` (as a reply to someone's message; or name an account) |
 | The DAO | `/dao` · `/treasury` · `/proposals` · `/proposal <id>` · `/council` |
 | Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
+| Treasury | `/swap <amount> <from> <to> [slippage%]` (on Rhea) · `/liquidstake <amount> [linear\|metapool\|nearx]` · `/liquidunstake <amount> [provider]` · `/liquidwithdraw [provider]` |
 | NEAR Intents | `/buy <amount> <from> <to>[@chain] [slippage%]` · `/paychain <amount> <token>@<chain> <address> <description>` · `/intentsstatus <id>` · `/intentswithdraw <amount> <token>` |
 | EVM (Chain Signatures) | `/evm` · `/aave supply\|withdraw <amount\|all>` (Aave on Base) |
 | Hyperliquid | `/hyperliquid` · `/hlagent <address> [name]` · `/hlrevoke [name]` · `/hlsend <amount> <address>` |
-| Treasury | `/swap <amount> <from> <to> [slippage%]` (on Rhea) · `/liquidstake <amount> [linear\|metapool\|nearx]` · `/liquidunstake <amount> [provider]` · `/liquidwithdraw [provider]` |
 | Deciding | `/vote <id> for\|against\|abstain` · `/execute <id>` · `/cancel <id>` |
 | Optimistic | `/challenge <id>` · `/resolvechallenge <id>` |
 | Liquid | `/delegate <account>` · `/undelegate` · `/resolve <id> [delegator]` |
@@ -168,75 +308,28 @@ Voting periods default to an hour so a lifecycle fits in a demo; see
 | Sowellian | `/position <id> yes\|no <amount>` · `/proposeresolution <id> success\|failure` · `/dispute <id>` · `/adjudicate <id> <outcome>` · `/finalizeresolution <id>` · `/claimposition <id>` · `/forfeitbond <id>` |
 | Decision markets | `/seed <id> <tokens> <NEAR>` · `/split <id> <amount> <NEAR\|token>` · `/trade <id> pass\|fail <amount> <NEAR\|token>` · `/merge` · `/redeem <id>` · `/reclaimliquidity <id>` |
 
-`/help` and Telegram's "/" command menu show only the commands for the
-chat's model; a chat without a DAO sees just `/help`, `/createdao`,
-`/link`, `/wallet` and `/send`.
+`/help` and Telegram's "/" menu show only the commands for the chat's model.
+A chat without a DAO sees just `/help`, `/createdao`, `/link`, `/wallet` and
+`/send`. Accounts can be written as `me`. Replies link user and treasury
+addresses to the explorer, next to the address itself, which can be tapped
+to copy.
 
-The treasury commands propose putting DAO funds to work on NEAR, voted on
-like any other proposal: swaps on Rhea (formerly Ref Finance), with a
-minimum output so a swap reverts rather than fill at a worse price, and
-liquid staking with LiNEAR, Meta Pool or Stader (NearX). `/treasury` lists what the DAO
-holds, including swapped tokens and staked NEAR.
-
-Through [NEAR Intents](https://docs.near-intents.org/) (mainnet), a DAO can
-buy any token it lists (`/buy 100 USDC BTC`) and pay an exact amount to an
-address on 30+ chains (`/paychain 500 USDC@sol <address> March design
-work`). The bot gets a live 1Click quote and proposes depositing into it; it
-only proposes when the quote lasts longer than the proposal can still
-execute, because depositing into an expired quote can lose the funds. If
-the price moves past the slippage, the deposit is refunded to the DAO's own
-NEAR Intents account, and `/intentswithdraw` brings it back. Bought assets
-that live on other chains (BTC, ETH...) stay in that account.
-
-With NEAR [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures),
-each DAO also has its own address on EVM chains, derived from its NEAR
-account, which only its proposals can sign for (`/evm` shows it). `/aave
-supply 100` proposes the Base transactions (approve, then supply to Aave);
-the proposal carries them unsigned in its description, so anyone can check
-what the DAO is signing, and asks NEAR's signing network to sign them. When
-it executes, the bot takes the signatures from the execution, checks each
-recovers to the DAO's address, and sends the transactions. Fund the address
-through NEAR Intents: `/paychain 100 USDC@base dao <description>`.
-
-The same address is the DAO's Hyperliquid account; NEAR Intents funds it
-directly (`/paychain 500 USDC@hypercore dao <description>`). Voting on every
-order would be too slow for perps, so the DAO appoints a trading agent by
-proposal (`/hlagent <address>`): a trader, a bot or an AI agent that can
-place and cancel orders for the DAO's account but can't withdraw.
-`/hlrevoke` replaces it with an address nobody holds, and moving USDC out
-(`/hlsend`) takes a proposal. These are Hyperliquid's own signed actions,
-signed by the DAO's key; Hyperliquid accepts them for about three days, so
-the proposal must execute by then (the proposal says when). The menu updates on its own when a chat
-creates, links, unlinks or switches its DAO. Accounts can be written as
-`me`.
-
-Each command is defined once in `bot/src/platforms/commands/`, one file
-per topic (`setup.js`, `wallet.js`, `dao.js`, `proposing.js`,
-`deciding.js`, `council.js`, `markets.js`), and Telegram and Discord both
-run them.
-
-## Accounts and keys
-
-Each chat user gets a named NEAR account under the operator, such as
-`tg123456.orbits.testnet`, created on first use. Its key is generated by the
-bot and stored envelope-encrypted with AWS KMS in Supabase: a custodial model,
-as in Protean's EVM bot. The bot's KMS access is limited to the encryption
-context `{"app": "protean-near"}`. Contract accounts are created with no
-access key and use shared code by hash, so their code can't be changed.
+Each command is defined once, in `bot/src/platforms/commands/`, and both
+Telegram and Discord run it.
 
 ## Built with
 
 - [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract) (MIT),
-  unmodified, as every DAO's core.
-- [Rhea Finance](https://rhea.finance/) (formerly Ref Finance) for swaps,
-  and [LiNEAR](https://github.com/linear-protocol/LiNEAR),
-  [Meta Pool](https://github.com/Narwallets/meta-pool) and
-  [Stader NearX](https://github.com/stader-labs/near-liquid-token) for
-  liquid staking.
-- NEAR global contracts: the nine modules and the staking and token
-  contracts are published once by code hash, and every DAO uses them
-  without its own copy.
-- NEAR named accounts and sub-accounts (`tg123456.orbits.testnet`,
-  `tw.ark.orbits.testnet`).
+  unmodified, as every DAO's core and factory.
+- NEAR global contracts: the modules, staking, the token, and the Sputnik
+  DAO code are each published once by code hash and shared by every DAO.
+- NEAR named accounts and sub-accounts, for members and each DAO's contracts.
+- [NEAR Intents](https://docs.near-intents.org/) and
+  [Chain Signatures](https://docs.near.org/chain-abstraction/chain-signatures)
+  for other chains.
+- [Rhea Finance](https://rhea.finance/), [LiNEAR](https://github.com/linear-protocol/LiNEAR),
+  [Meta Pool](https://github.com/Narwallets/meta-pool),
+  [Stader NearX](https://github.com/stader-labs/near-liquid-token),
+  [Aave](https://aave.com/) and [Hyperliquid](https://hyperliquid.xyz/).
 - Protean's EVM contracts and bot ([Spaces](https://github.com/replico-labs/Spaces))
   as the model rules and the chat layer's base.

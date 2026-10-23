@@ -183,10 +183,11 @@ function assetOf(raw, token, usage) {
 
 /** A UserError unless the caller's account can spend `amount` yoctoNEAR and still pay gas. */
 async function requireNear(ctx, account, amount) {
-  const spendable = await services.wallets.availableBalance(account.accountId);
-  const gas = 5n * 10n ** 22n; // 0.05 NEAR: a 300 Tgas call reserves about 0.03 at today's gas price
-  if (spendable < amount + gas) {
-    throw new UserError(`That takes ${formatNear(amount)} NEAR; your account has ${formatNear(spendable)} spendable. Send NEAR to it first (\`${ctx.cmd("wallet")}\` shows its address).`);
+  // The call itself holds NEAR for gas until it finishes (0.3 at testnet's gas price), on top of the amount.
+  const [available, hold] = await Promise.all([services.wallets.availableBalance(account.accountId), services.wallets.gasHoldNear()]);
+  const spendable = available > hold ? available - hold : 0n;
+  if (spendable < amount) {
+    throw new UserError(`That takes ${formatNear(amount)} NEAR; your account has ${formatNear(spendable)} spendable (it keeps ${formatNear(hold)} for gas). Send NEAR to it first (\`${ctx.cmd("wallet")}\` shows its address).`);
   }
 }
 

@@ -12,7 +12,7 @@ const { RPC_URL } = await import("../src/config.js");
 const { runCommand } = await import("../src/platforms/commands.js");
 const { services } = await import("../src/platforms/services.js");
 const { operatorAccount, signingAccount, availableBalance } = await import("../src/near/client.js");
-const { ensureGas, userAccountId } = await import("../src/near/wallets.js");
+const { ensureGas, gasHoldNear, userAccountId } = await import("../src/near/wallets.js");
 
 export { services };
 
@@ -31,11 +31,14 @@ Object.assign(services, {
       const accountId = userAccountId(platform, userId);
       if (!keys[accountId]) {
         keys[accountId] = KeyPair.fromRandom("ed25519");
-        await operatorAccount().createSubAccount({ accountOrPrefix: accountId, publicKey: keys[accountId].getPublicKey().toString(), nearToTransfer: nearToYocto("1") });
+        // 1 NEAR, so users can spend some (decision markets). SANDBOX_USER_NEAR=0.05 starts them as on
+        // testnet (NEW_ACCOUNT_NEAR), with only ensureGas's top-ups to pay for their calls.
+        await operatorAccount().createSubAccount({ accountOrPrefix: accountId, publicKey: keys[accountId].getPublicKey().toString(), nearToTransfer: nearToYocto(process.env.SANDBOX_USER_NEAR ?? "1") });
       }
       return signingAccount(accountId, keys[accountId].toString());
     },
     ensureGas,
+    gasHoldNear,
     findUserAccountId: async (platform, userId) => (keys[userAccountId(platform, userId)] ? userAccountId(platform, userId) : null),
     availableBalance,
   },

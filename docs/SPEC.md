@@ -7,7 +7,9 @@ without moving their treasury.
 
 ## Terms
 
-- **Core** — an unmodified Sputnik DAO created through the official factory
+- **Core** — an unmodified Sputnik DAO, created through Protean's own copy
+  of Sputnik's factory (`bot/scripts/deploy-factory.js`, Sputnik 3.2, which
+  shares the DAO code as a global contract) or an official one
   (`sputnikv2.testnet`, `sputnik-dao.near`). It holds the treasury and
   executes proposals.
 - **Orbit** — a governance module contract. It holds proposals and votes
@@ -183,7 +185,7 @@ by swapping orbits.
 | --- | --- |
 | Publish all nine modules, staking and token (once per network) | ~255 NEAR: 2.55 MB at 10× normal storage |
 | ...or staking, token and one module | ~57 NEAR; each further module ~23-28 NEAR |
-| Each DAO (`/createdao`) | ~0.5 NEAR: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for its accounts, and registrations |
+| Each DAO (`/createdao`) | ~0.6 NEAR through a 3.2 factory: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for its accounts, and registrations. `sputnikv2.testnet` still stores the DAO code in each DAO and needs ~5.4 NEAR more |
 | A model switch | ~0.25 NEAR for the new orbit |
 | Each member who stakes | ~0.01 NEAR staking storage, paid from their account |
 

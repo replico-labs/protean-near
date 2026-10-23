@@ -10,7 +10,7 @@ import * as chainsig from "../near/chainsig.js";
 import * as evm from "../near/evm.js";
 import * as hyperliquid from "../near/hyperliquid.js";
 import { VENUES } from "../near/venues.js";
-import { getOrCreateUserAccount, ensureGas, findUserAccountId } from "../near/wallets.js";
+import { getOrCreateUserAccount, ensureGas, findUserAccountId, gasHoldNear } from "../near/wallets.js";
 import { availableBalance } from "../near/client.js";
 import { getChatDao, setChatDao, removeChatDao, chatsOn } from "../db.js";
 import { isWalletStoreConfigured } from "../walletStore.js";
@@ -32,7 +32,7 @@ export const services = {
   evm,
   hyperliquid,
   venues: VENUES,
-  wallets: { getOrCreateUserAccount, ensureGas, findUserAccountId, availableBalance },
+  wallets: { getOrCreateUserAccount, ensureGas, findUserAccountId, availableBalance, gasHoldNear },
   db: { getChatDao, setChatDao, removeChatDao, chatsOn },
   isWalletStoreConfigured,
 };

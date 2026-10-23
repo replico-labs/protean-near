@@ -43,7 +43,7 @@ beforeEach(() => {
       setChatDao: (p, c, l) => (links[`${p}:${c}`] = l),
       removeChatDao: (p, c) => delete links[`${p}:${c}`],
     },
-    wallets: { getOrCreateUserAccount: async () => account, ensureGas: async () => {}, availableBalance: async () => 5n * 10n ** 24n },
+    wallets: { getOrCreateUserAccount: async () => account, ensureGas: async () => {}, availableBalance: async () => 5n * 10n ** 24n, gasHoldNear: async () => 3n * 10n ** 23n },
     deploy: {
       daoAccounts: (name) => ({ base: `${name}.orbits.testnet`, dao: `${name}.sputnikv2.testnet`, token: `token.${name}.orbits.testnet`, staking: `staking.${name}.orbits.testnet` }),
       createDao: async (args) => {
@@ -391,7 +391,7 @@ test("tip sends the DAO's token to the member replied to, and links the transact
   };
   const res = await runCommand("tip", ctx(["25"], { replyTo: { userId: "7", name: "Bola" } }));
   assert.deepEqual(calls[0], ["sendToken", TOKEN, "tg7.orbits.testnet", 25n * E18]);
-  assert.match(res.text, /Sent 25 ARK to Bola \(\[tg7\.orbits\.testnet\]\(https:\/\/testnet\.nearblocks\.io\/address\/tg7\.orbits\.testnet\)\)/);
+  assert.match(res.text, /Sent 25 ARK to Bola \(`tg7\.orbits\.testnet` · \[Explorer\]\(https:\/\/testnet\.nearblocks\.io\/address\/tg7\.orbits\.testnet\)\)/);
   assert.match(res.text, /\[View transaction\]\(https:\/\/testnet\.nearblocks\.io\/txns\/TxHash1\)/);
   // /send works the same way as a reply, and with a Discord mention
   await runCommand("send", ctx(["2", "ARK"], { replyTo: { userId: "7", name: "Bola" } }));
@@ -444,7 +444,7 @@ test("decision markets: propose, seed, trade", async () => {
   const proposed = await runCommand("pay", ctx(["1", "NEAR", "me", "grant"]));
   assert.match(proposed.text, /\/seed 0 <tokens> <NEAR>/);
   assert.match((await runCommand("seed", ctx(["0", "1000", "1"]))).text, /takes 1000 ARK; you have 100 ARK/);
-  assert.match((await runCommand("seed", ctx(["0", "50", "10"]))).text, /takes 10 NEAR; your account has 5 spendable/);
+  assert.match((await runCommand("seed", ctx(["0", "50", "10"]))).text, /takes 10 NEAR; your account has 4\.7 spendable \(it keeps 0\.3 for gas\)/);
   assert.equal(calls.length, 1, "nothing seeded on a short balance");
   await runCommand("seed", ctx(["0", "50", "1"]));
   assert.deepEqual(calls[1], ["seedNear", 0, 10n ** 24n]);

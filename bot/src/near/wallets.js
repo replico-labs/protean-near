@@ -1,7 +1,7 @@
 import { nearToYocto } from "near-api-js";
-import { OPERATOR_ACCOUNT_ID, NEW_ACCOUNT_NEAR, MIN_ACCOUNT_NEAR } from "../config.js";
+import { OPERATOR_ACCOUNT_ID, NEW_ACCOUNT_NEAR, MIN_ACCOUNT_NEAR, MAX_GAS, SIMPLE_GAS } from "../config.js";
 import { findWalletRecord, createWalletRecord, walletKey } from "../walletStore.js";
-import { accountExists, availableBalance, operatorAccount, signingAccount } from "./client.js";
+import { accountExists, availableBalance, operatorAccount, signingAccount, provider } from "./client.js";
 
 /**
  * Each chat user gets a named NEAR account under the operator account, for
@@ -46,16 +46,35 @@ export async function getOrCreateUserAccount(platform, platformUserId) {
   return signingAccount(record.account_id, await walletKey(record));
 }
 
+// NEAR holds a transaction's attached gas up front at ten times the gas
+// price (0.3 NEAR for 300 Tgas on testnet) and refunds what isn't burnt a
+// block later. A command sends at most a small call (SIMPLE_GAS: a storage
+// deposit) and then a MAX_GAS one, so an account keeps room for both.
+const GAS_HOLD_MULTIPLIER = 10n;
+const GAS_PRICE_TTL_MS = 10 * 60_000;
+let gasHold = null;
+
+/** What an account must have spendable for a command's calls' gas; the gas price is re-read every 10 minutes. */
+export async function gasHoldNear() {
+  if (!gasHold || Date.now() - gasHold.at > GAS_PRICE_TTL_MS) {
+    const { gas_price } = await provider.viewGasPrice(null);
+    gasHold = { at: Date.now(), amount: (MAX_GAS + SIMPLE_GAS) * BigInt(gas_price) * GAS_HOLD_MULTIPLIER + nearToYocto("0.002") };
+  }
+  return gasHold.amount;
+}
+
 /**
  * Tops `accountId` back up from the operator when its spendable balance is
- * below MIN_ACCOUNT_NEAR plus `deposit` (a refundable storage deposit it's
- * about to attach), so it can pay gas. The operator pays gas and storage
- * only, never the amounts users send.
+ * below what a call holds for gas plus MIN_ACCOUNT_NEAR plus `deposit` (a
+ * refundable storage deposit it's about to attach). The top-up leaves
+ * NEW_ACCOUNT_NEAR above the gas hold, so it isn't needed again for a
+ * while. The operator pays gas and storage only, never the amounts users
+ * send; the hold comes back after every call, so it stays in the account.
  */
 export async function ensureGas(accountId, deposit = 0n) {
-  const available = await availableBalance(accountId);
-  const min = nearToYocto(MIN_ACCOUNT_NEAR) + deposit;
+  const [available, hold] = await Promise.all([availableBalance(accountId), gasHoldNear()]);
+  const min = hold + nearToYocto(MIN_ACCOUNT_NEAR) + deposit;
   if (available >= min) return;
-  const target = nearToYocto(NEW_ACCOUNT_NEAR) + deposit;
+  const target = hold + nearToYocto(NEW_ACCOUNT_NEAR) + deposit;
   await operatorAccount().transfer({ receiverId: accountId, amount: target - available });
 }

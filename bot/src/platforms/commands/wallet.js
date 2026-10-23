@@ -1,7 +1,7 @@
 import { NEAR_DECIMALS } from "../../near/amounts.js";
 import { isStakeModel } from "../../near/models.js";
 import { services } from "../services.js";
-import { UserError, reply, requireDao, userAccount, parseAmount, recipientAccount, accountLink, txLink, formatNear, tokenInfo, explain } from "../helpers.js";
+import { UserError, reply, requireDao, userAccount, parseAmount, recipientAccount, copyableAccount, txLink, formatNear, tokenInfo, explain } from "../helpers.js";
 
 const wallet = {
   section: "Your wallet",
@@ -12,7 +12,7 @@ const wallet = {
   async run(ctx) {
     const account = await userAccount(ctx);
     const near = await services.wallets.availableBalance(account.accountId);
-    const lines = [`*Your account:* ${accountLink(account.accountId)}`, `NEAR: ${formatNear(near)}`];
+    const lines = [`*Your account:* ${copyableAccount(account.accountId)}`, `NEAR: ${formatNear(near)}`];
     const dao = services.db.getChatDao(ctx.platform, ctx.chatId);
     if (dao) {
       const token = await tokenInfo(dao);
@@ -72,7 +72,7 @@ const unstake = {
 };
 
 /** Who a transfer went to: the member replied to by name, with their account. */
-const toWhom = (ctx, rawTo, to) => (rawTo === undefined && ctx.replyTo ? `${ctx.replyTo.name} (${accountLink(to)})` : accountLink(to));
+const toWhom = (ctx, rawTo, to) => (rawTo === undefined && ctx.replyTo ? `${ctx.replyTo.name} (${copyableAccount(to)})` : copyableAccount(to));
 
 const send = {
   section: "Your wallet",

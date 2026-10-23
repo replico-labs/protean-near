@@ -80,6 +80,9 @@ export async function recipientAccount(ctx, raw, usage) {
 /** An account as a link to the explorer (a plain name on a local sandbox). */
 export const accountLink = (id) => (NETWORK_ID === "sandbox" ? `\`${id}\`` : `[${id}](${EXPLORER_URL}/address/${id})`);
 
+/** A user's or treasury's account: the name to tap and copy, then its explorer link beside it. */
+export const copyableAccount = (id) => (NETWORK_ID === "sandbox" ? `\`${id}\`` : `\`${id}\` · [Explorer](${EXPLORER_URL}/address/${id})`);
+
 /** " · View transaction", linking a transaction on the explorer, or "" without one. */
 export const txLink = (hash) => (hash && NETWORK_ID !== "sandbox" ? ` · [View transaction](${EXPLORER_URL}/txns/${hash})` : "");
 
