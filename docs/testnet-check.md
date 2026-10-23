@@ -14,7 +14,7 @@ The Orbits contracts are built with near-sdk 5.29, which needs protocol 84
 or later (nearcore 2.12). Check the network first:
 
 ```bash
-curl -s https://rpc.testnet.near.org/status | jq .protocol_version
+curl -s -X POST https://near-testnet.drpc.org -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"status","params":[]}' | jq .result.protocol_version
 ```
 
 ## 1. Factory version

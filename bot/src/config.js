@@ -4,12 +4,14 @@
 
 const NETWORKS = {
   testnet: {
-    rpcUrl: "https://rpc.testnet.near.org",
+    // Free public RPCs that need no key (dRPC, then Intear); NEAR's own rpc.*.near.org is
+    // deprecated and rate-limited. Each request falls back to the next if one fails.
+    rpcUrl: "https://near-testnet.drpc.org,https://testnet-rpc.intea.rs",
     explorer: "https://testnet.nearblocks.io",
     sputnikFactory: "sputnikv2.testnet",
   },
   mainnet: {
-    rpcUrl: "https://rpc.mainnet.near.org",
+    rpcUrl: "https://near.drpc.org,https://rpc.intea.rs",
     explorer: "https://nearblocks.io",
     sputnikFactory: "sputnik-dao.near",
   },
@@ -25,7 +27,9 @@ export const NETWORK_ID = process.env.NEAR_NETWORK || "testnet";
 if (!NETWORKS[NETWORK_ID]) throw new Error(`NEAR_NETWORK must be "testnet", "mainnet" or "sandbox", not "${NETWORK_ID}"`);
 const network = NETWORKS[NETWORK_ID];
 
-export const RPC_URL = process.env.NEAR_RPC_URL || network.rpcUrl;
+/** NEAR_RPC_URL may list several RPCs, comma-separated: each request goes to the next when one fails. */
+export const RPC_URLS = (process.env.NEAR_RPC_URL || network.rpcUrl).split(",").map((u) => u.trim()).filter(Boolean);
+export const RPC_URL = RPC_URLS[0];
 export const EXPLORER_URL = network.explorer;
 export const SPUTNIK_FACTORY_ID = process.env.SPUTNIK_FACTORY_ID || network.sputnikFactory;
 

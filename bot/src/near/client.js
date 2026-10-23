@@ -1,12 +1,13 @@
-import { Account, JsonRpcProvider, actions } from "near-api-js";
-import { RPC_URL, OPERATOR_ACCOUNT_ID, OPERATOR_PRIVATE_KEY, MAX_GAS } from "../config.js";
+import { Account, JsonRpcProvider, FailoverRpcProvider, actions } from "near-api-js";
+import { RPC_URLS, OPERATOR_ACCOUNT_ID, OPERATOR_PRIVATE_KEY, MAX_GAS } from "../config.js";
 
 /**
  * The NEAR connection: read-only views, and signed calls from the operator
  * or a user's account.
  */
 
-export const provider = new JsonRpcProvider({ url: RPC_URL });
+export const provider =
+  RPC_URLS.length > 1 ? new FailoverRpcProvider(RPC_URLS.map((url) => new JsonRpcProvider({ url }))) : new JsonRpcProvider({ url: RPC_URLS[0] });
 
 /** Calls view method `method` on `contractId`; returns the parsed JSON result. */
 export function view(contractId, method, args = {}) {
