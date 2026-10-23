@@ -85,6 +85,7 @@ Expect `All checks passed.` after these steps:
 | `/aave supply 5` | Executing signs approve and supply; both recover to the DAO's address and supply 5 USDC to Aave on its behalf. Base itself can't be reached from a sandbox, so its nonce, fees, balances and the final send are stood in for |
 | `/aave supply 0.002 ETH` | One transaction to Aave's ETH gateway, carrying the ETH. The RPC is made to give up while the signer answers, so the bot reads the execution by its hash; the send to Base is made to fail once, and a second `/execute` sends what was signed |
 | Notifications | When voting on a proposal ends and it can execute, the bot posts once in the chat, with the `/execute` command |
+| Hyperliquid from the chat | `/hltraders add me` and three `/hllimits` proposals pass; the rules come back from the core's executed proposals. After `/hlagent bot` passes, the voted-in trader goes long within the limits through the bot's agent (signed by it); others, and leverage over the limit, are refused. Hyperliquid's API is stood in for, after the same signature check |
 
 `sandbox-models.js` gives each model its own DAO and chat:
 

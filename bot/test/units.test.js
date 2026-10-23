@@ -247,3 +247,31 @@ test("Base RPC: an empty 503 moves to the next RPC, and a refused pending nonce 
     globalThis.fetch = realFetch;
   }
 });
+
+test("Hyperliquid L1 signing matches the Python SDK's test vectors (orders, mainnet and testnet)", async () => {
+  const hl = await import("../src/near/hyperliquid.js");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const { parseSignature } = await import("viem");
+  const wallet = privateKeyToAccount("0x0123456789012345678901234567890123456789012345678901234567890123");
+  const sign = async (action, nonce, mainnet) => parseSignature(await wallet.sign({ hash: hl.l1Digest(action, nonce, mainnet) }));
+  // signing_test.py: test_l1_action_signing_matches and test_l1_action_signing_order_matches
+  const dummy = { type: "dummy", num: 100000000000 };
+  assert.equal((await sign(dummy, 0, true)).r, "0x053749d5b30552aeb2fca34b530185976545bb22d0b3ce6f62e31be961a59298");
+  assert.equal((await sign(dummy, 0, false)).s, "0x17b8b32f086e8cdede991f1e2c529f5dd5297cbe8128500e00cbaf766204a613");
+  const order = { type: "order", orders: [{ a: 1, b: true, p: "100", s: "100", r: false, t: { limit: { tif: "Gtc" } } }], grouping: "na" };
+  const mainnet = await sign(order, 0, true);
+  assert.deepEqual([mainnet.r, mainnet.s, Number(mainnet.v)], ["0xd65369825a9df5d80099e513cce430311d7d26ddf477f5b3a33d2806b100d78e", "0x2b54116ff64054968aa237c20ca9ff68000f977c93289157748a3162b6ea940e", 28]);
+  assert.equal((await sign(order, 0, false)).r, "0x82b2ba28e76b3d761093aaded1b1cdad4960b3af30212b343fb2e6cdfa4e3d54");
+});
+
+test("Hyperliquid prices and sizes are written as it accepts them", async () => {
+  const hl = await import("../src/near/hyperliquid.js");
+  assert.equal(hl.wirePrice(1670.123, 4), "1670.1", "5 significant figures");
+  assert.equal(hl.wirePrice(2.34567, 2), "2.3457");
+  assert.equal(hl.wirePrice(0.000123456, 0), "0.000123", "at most 6 - szDecimals decimals");
+  assert.equal(hl.wirePrice(123456.7, 2), "123457", "whole prices are always fine");
+  assert.equal(hl.wireNumber(0.01479, 4), "0.0147", "sizes round down");
+  assert.equal(hl.wireNumber(5, 0), "5");
+  const order = hl.marketOrder({ asset: 4, szDecimals: 4 }, true, 0.15, 3300);
+  assert.deepEqual(order.orders[0], { a: 4, b: true, p: "3333", s: "0.15", r: false, t: { limit: { tif: "Ioc" } } });
+});

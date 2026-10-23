@@ -281,6 +281,39 @@ if (process.env.CHAIN_SIGNER_ID) {
   assert.deepEqual([accepted[0].action.type, accepted[0].action.agentAddress, accepted[0].action.agentName], ["approveAgent", agent, "desk"]);
   assert.equal(accepted[0].signer.toLowerCase(), address.toLowerCase());
   console.log(`  ✔ the DAO's address signed approveAgent for ${agent} ("desk"): it can trade for the DAO, never withdraw`);
+
+  step("Hyperliquid from the chat: the DAO votes in a trader and limits, approves the bot as its agent, and the trader trades within them");
+  // The bot's agent key would live in Supabase, encrypted with KMS; here it's kept in memory.
+  const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+  const agentKey = generatePrivateKey();
+  const agentAddress = privateKeyToAccount(agentKey).address;
+  services.hlAgents = { getOrCreateAgentKey: async () => ({ address: agentAddress, privateKey: async () => agentKey }), findAgentAddress: async () => agentAddress };
+  const placed = [];
+  Object.assign(services.hyperliquid, {
+    markets: async () => ({ ETH: { coin: "ETH", asset: 1, szDecimals: 4, maxLeverage: 25 } }),
+    mids: async () => ({ ETH: 3300 }),
+    agents: async () => accepted.filter((a) => a.action.agentName === "protean").map((a) => ({ name: "protean", address: a.action.agentAddress.toLowerCase() })),
+    // Stands in for Hyperliquid's /exchange: checks the agent signed it, as Hyperliquid does.
+    sendL1: async (key, action) => {
+      const nonce = Date.now();
+      const signer = await recoverAddress({ hash: realHl.l1Digest(action, nonce), signature: await privateKeyToAccount(key).sign({ hash: realHl.l1Digest(action, nonce) }) });
+      assert.equal(signer, agentAddress);
+      placed.push(action);
+      return action.type === "order" ? { type: "order", data: { statuses: [{ filled: { totalSz: action.orders[0].s, avgPx: "3300", oid: 1 } }] } } : { type: "default" };
+    },
+  });
+  await run(1, "long ETH 300", { expect: /Only the DAO's traders/ });
+  await pass(await propose("hltraders add me"));
+  for (const limit of ["size 1000", "leverage 5", "markets ETH"]) await pass(await propose(`hllimits ${limit}`));
+  const rules = await (await import("../src/platforms/commands/hyperliquid.js")).currentRules(link());
+  assert.deepEqual(rules, { traders: [account(1)], maxPositionUsd: 1000, maxLeverage: 5, markets: ["ETH"] });
+  await run(1, "long ETH 300", { expect: /hasn't approved the bot/ });
+  await pass(await propose("hlagent bot"));
+  await run(2, "long ETH 300", { expect: /Only the DAO's traders/ });
+  await run(1, "long ETH 300 7x", { expect: /limited to 5×/ });
+  await run(1, "long ETH 300 2x", { expect: /📈 Bought 0\.0909 ETH at \$3300/ });
+  assert.deepEqual(placed.map((a) => a.type), ["updateLeverage", "order"]);
+  console.log("  ✔ the rules came back from the core's executed proposals; alice, the voted-in trader, went long 0.0909 ETH (about $300) at 2× through the bot's approved agent, and bob couldn't");
 }
 
 step("Notifications: the bot posts in the chat when voting ends and the proposal can execute");

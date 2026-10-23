@@ -661,6 +661,70 @@ test("aave supplies ETH through Aave's gateway, and withdraws it after approving
   assert.match((await runCommand("aave", ctx(["supply", "1", "DOGE"]))).text, /USDC or ETH/);
 });
 
+test("trading from the chat: a vote names the traders and limits; only traders trade, and only within them", async () => {
+  linked();
+  const KEY = "0x0123456789012345678901234567890123456789012345678901234567890123";
+  const AGENT = (await import("viem/accounts")).privateKeyToAccount(KEY).address;
+  services.wallets.getOrCreateUserAccount = async (p, userId) => ({ accountId: userId === "42" ? ME : `tg${userId}.orbits.testnet` });
+  services.hlAgents = {
+    getOrCreateAgentKey: async () => ((state.agentStored = true), { address: AGENT, privateKey: async () => KEY }),
+    findAgentAddress: async () => (state.agentStored ? AGENT : null),
+  };
+  Object.assign(services.hyperliquid, {
+    markets: async () => ({ ETH: { coin: "ETH", asset: 1, szDecimals: 4, maxLeverage: 25 }, BTC: { coin: "BTC", asset: 0, szDecimals: 5, maxLeverage: 40 }, DOGE: { coin: "DOGE", asset: 7, szDecimals: 0, maxLeverage: 10 } }),
+    mids: async () => ({ ETH: 3300, BTC: 60000, DOGE: 0.1 }),
+    agents: async () => (state.agentApproved ? [{ name: "protean", address: AGENT.toLowerCase() }] : []),
+    sendL1: async (key, action) => {
+      calls.push(["sendL1", key, action]);
+      if (action.type !== "order") return { type: "default" };
+      return { type: "order", data: { statuses: [{ filled: { totalSz: action.orders[0].s, avgPx: "3301.5", oid: 9 } }] } };
+    },
+  });
+  // A proposal that passed: the orbit executed it and the core approved it, as on chain.
+  const pass = () => {
+    const p = state.proposals.at(-1);
+    p.state = "Executed";
+    state.coreProposals.push({ id: state.coreProposals.length, description: p.description, kind: p.kind, status: "Approved" });
+  };
+  const said = async (name, args, extra) => (await runCommand(name, ctx(args, extra))).text;
+
+  assert.match(await said("long", ["ETH", "500", "3x"]), /Only the DAO's traders trade from the chat, and it has none yet/);
+  await runCommand("hltraders", ctx(["add", "me"]));
+  const added = state.proposals.at(-1);
+  assert.equal(realEvm.readable(added.description), `Hyperliquid trading rules: add ${ME} as a trader`);
+  assert.equal(added.kind, "Vote", "a signal: nothing to execute but the record");
+  assert.match(await said("hllimits", ["size", "1000"]), /still open/, "one rules proposal at a time");
+  pass();
+  assert.match(await said("long", ["ETH", "500"]), /needs a position limit, a leverage limit, markets/);
+  for (const limit of [["size", "$1,000"], ["leverage", "5x"], ["markets", "eth,", "btc"]]) {
+    await runCommand("hllimits", ctx(limit));
+    pass();
+  }
+  assert.match(await said("hllimits", ["markets", "FOO"]), /no perp market for FOO/);
+  assert.match(await said("hyperliquid", []), /Traders: `tg42\.orbits\.testnet`\nLimits: positions up to \$1,000 per market · leverage up to 5× · markets ETH, BTC/);
+
+  assert.match(await said("long", ["ETH", "500"]), /hasn't approved the bot as its Hyperliquid agent/);
+  await runCommand("hlagent", ctx(["bot"]));
+  assert.equal(realEvm.txsIn(state.proposals.at(-1).description).actions[0].agentAddress, AGENT);
+  state.agentApproved = true;
+
+  assert.match(await said("long", ["DOGE", "50"]), /trades only ETH, BTC/);
+  assert.match(await said("long", ["ETH", "500", "6x"]), /Leverage is limited to 5×/);
+  // The account already holds 0.1 ETH ($330): $800 more would make $1,130.
+  assert.match(await said("long", ["ETH", "800"]), /make the DAO's ETH position \$1,130; the DAO allows \$1,000 per market \(room for about \$670 more\)/);
+  assert.match(await said("short", ["ETH", "50"], { userId: "7" }), /Only the DAO's traders/);
+  assert.equal(calls.filter((c) => c[0] === "sendL1").length, 0, "nothing sent so far");
+
+  assert.match(await said("long", ["ETH", "500", "3x"]), /📈 Bought 0\.1515 ETH at \$3301\.5 \(≈ \$500\.18\), 3× leverage/);
+  const [leverage, order] = calls.filter((c) => c[0] === "sendL1");
+  assert.equal(leverage[1], KEY, "signed with the bot's agent key for the DAO");
+  assert.deepEqual(leverage[2], { type: "updateLeverage", asset: 1, isCross: true, leverage: 3 });
+  assert.deepEqual(order[2].orders[0], { a: 1, b: true, p: "3333", s: "0.1515", r: false, t: { limit: { tif: "Ioc" } } });
+
+  assert.match(await said("close", ["ETH"]), /✅ Closed 0\.1 ETH/);
+  assert.deepEqual(calls.filter((c) => c[0] === "sendL1").at(-1)[2].orders[0], { a: 1, b: false, p: "3267", s: "0.1", r: true, t: { limit: { tif: "Ioc" } } });
+});
+
 test("paychain can pay the DAO's own EVM address", async () => {
   linked();
   await runCommand("paychain", ctx(["1", "USDC@sol", "dao", "x"]));

@@ -13,7 +13,7 @@ import { VENUES } from "../near/venues.js";
 import { getOrCreateUserAccount, ensureGas, findUserAccountId, gasHoldNear } from "../near/wallets.js";
 import { availableBalance } from "../near/client.js";
 import { getChatDao, setChatDao, removeChatDao, chatsOn } from "../db.js";
-import { isWalletStoreConfigured } from "../walletStore.js";
+import { isWalletStoreConfigured, getOrCreateAgentKey, findAgentAddress } from "../walletStore.js";
 
 /**
  * Everything the commands touch outside themselves: the chain, wallets and
@@ -34,5 +34,6 @@ export const services = {
   venues: VENUES,
   wallets: { getOrCreateUserAccount, ensureGas, findUserAccountId, availableBalance, gasHoldNear },
   db: { getChatDao, setChatDao, removeChatDao, chatsOn },
+  hlAgents: { getOrCreateAgentKey, findAgentAddress },
   isWalletStoreConfigured,
 };

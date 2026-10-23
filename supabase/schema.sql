@@ -7,6 +7,9 @@
 -- One NEAR account per user per chat platform. The account's private key is
 -- envelope-encrypted with AWS KMS, with encryption context
 -- {"app": "protean-near"}.
+-- Rows with platform "hyperliquid" are the Hyperliquid agents the bot holds
+-- for DAOs (platform_user_id: the DAO's account; public_key: the agent's EVM
+-- address), encrypted the same way. An agent can trade, never withdraw.
 create table if not exists wallets (
   platform text not null,                -- telegram, discord, slack
   platform_user_id text not null,

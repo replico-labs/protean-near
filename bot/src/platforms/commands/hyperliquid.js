@@ -1,8 +1,10 @@
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { fromUnits } from "../../near/amounts.js";
 import { services } from "../services.js";
-import { UserError, reply, requireDao, userAccount, parseAmount, formatTime } from "../helpers.js";
+import { UserError, reply, requireDao, userAccount, parseAmount, formatTime, recipientAccount, copyableAccount } from "../helpers.js";
+import { latestProposals } from "../proposals.js";
 import { makeProposal } from "./proposing.js";
+import * as kinds from "../../near/kinds.js";
 
 /**
  * Hyperliquid perps for the DAO's own EVM address (Chain Signatures).
@@ -53,11 +55,15 @@ const hyperliquid = {
     const account = await services.hyperliquid.account(address).catch(() => null);
     if (!account) return reply(`Couldn't read Hyperliquid for \`${address}\` right now.`);
     const positions = account.positions.length ? account.positions.map((p) => `• ${p.coin}: ${p.size} (≈ $${p.value})`).join("\n") : "No open positions.";
+    const rules = await currentRules(dao).catch(() => null);
+    const agent = await services.hlAgents.findAgentAddress(dao.daoId).catch(() => null);
     return reply(
       [
         `*Hyperliquid account* \`${address}\``,
         `Value: $${account.accountValue} · Withdrawable: ${account.withdrawable} USDC`,
         positions,
+        ...(rules ? ["", "*Trading from the chat*", ...describeRules(rules, ctx.cmd)] : []),
+        agent ? `The bot's agent: \`${agent}\` (approved with \`${ctx.cmd("hlagent")} bot\`)` : `Let traders trade from the chat: \`${ctx.cmd("hlagent")} bot\``,
         `Fund it: \`${ctx.cmd("paychain")} <amount> USDC@hypercore dao <description>\``,
       ].join("\n"),
     );
@@ -67,20 +73,24 @@ const hyperliquid = {
 const hlagent = {
   section: "Treasury",
   needsDao: true,
-  usage: "<address> [name]",
-  description: "Propose a Hyperliquid trading agent for the DAO: it can trade, never withdraw",
+  usage: "<address|bot> [name]",
+  description: "Propose a Hyperliquid trading agent for the DAO (an address, or bot to trade from the chat): it can trade, never withdraw",
   options: [
-    { name: "address", description: "The agent's EVM address (a trader, a bot, an AI agent)", required: true },
+    { name: "address", description: "The agent's EVM address (a trader, an AI agent), or bot", required: true },
     { name: "name", description: `Agent name (default ${DEFAULT_AGENT}); a new agent with the same name replaces the old one`, required: false },
   ],
   async run(ctx) {
-    const usage = `${ctx.cmd("hlagent")} <address> [name]`;
+    const usage = `${ctx.cmd("hlagent")} <address|bot> [name]`;
     const dao = requireDao(ctx);
-    const [agent, name = DEFAULT_AGENT] = ctx.args;
-    if (!EVM_ADDRESS.test(agent ?? "")) throw new UserError(`\`${agent ?? ""}\` isn't an EVM address. Usage: \`${usage}\``);
+    const [raw, name = DEFAULT_AGENT] = ctx.args;
+    const byBot = String(raw ?? "").toLowerCase() === "bot";
+    // "bot": a key the bot generates and keeps for this DAO, so its named traders can trade from the chat.
+    const agent = byBot ? (await services.hlAgents.getOrCreateAgentKey(dao.daoId)).address : raw;
+    if (!EVM_ADDRESS.test(agent ?? "")) throw new UserError(`\`${raw ?? ""}\` isn't an EVM address. Usage: \`${usage}\``);
     const { nonce, validUntil } = services.hyperliquid.nonceForProposal();
     const action = services.hyperliquid.approveAgent(agent, name, nonce);
-    return proposeHyperliquid(ctx, dao, `Appoint ${agent} as the DAO's Hyperliquid trading agent "${name}": it can place and cancel orders, but not withdraw`, [action], validUntil);
+    const who = byBot ? `the bot's agent ${agent}, so the traders the DAO names can trade from the chat within its limits (\`${ctx.cmd("hltraders")}\`, \`${ctx.cmd("hllimits")}\`)` : agent;
+    return proposeHyperliquid(ctx, dao, `Appoint ${who} as the DAO's Hyperliquid trading agent "${name}": it can place and cancel orders, but not withdraw`, [action], validUntil);
   },
 };
 
@@ -125,4 +135,213 @@ const hlsend = {
   },
 };
 
-export const HYPERLIQUID_COMMANDS = { hyperliquid, hlagent, hlrevoke, hlsend };
+// --- Trading from the chat, through the bot's agent ---
+//
+// The DAO's trading rules are a proposal: who may trade (by NEAR account),
+// the largest position per market in USD, the highest leverage, and which
+// markets. A rules proposal carries the whole new set after a marker in its
+// description; the rules in force are those of the latest such proposal the
+// core executed, so they survive model switches and only a vote changes
+// them. Until all three limits are set, nobody trades.
+
+const RULES = "\n\n---\nhyperliquid-rules:";
+const NO_RULES = { traders: [], maxPositionUsd: null, maxLeverage: null, markets: [] };
+const OPEN = new Set(["Pending", "Active", "ChallengeWindow", "Succeeded", "Queued", "Positions", "InProgress"]);
+
+/** The rules a proposal's description carries, or null. */
+export function rulesIn(description) {
+  const at = String(description ?? "").indexOf(RULES);
+  if (at < 0) return null;
+  try {
+    return { ...NO_RULES, ...JSON.parse(description.slice(at + RULES.length)) };
+  } catch {
+    return null;
+  }
+}
+
+/** The DAO's trading rules in force: from the latest rules proposal its core executed. */
+export async function currentRules(dao) {
+  const last = await services.core.getLastProposalId(dao.daoId);
+  for (let to = last; to > 0; to -= 50) {
+    const from = Math.max(0, to - 50);
+    const page = await services.core.getCoreProposals(dao.daoId, from, to - from);
+    for (const p of [...page].reverse()) {
+      const rules = p.status === "Approved" && rulesIn(p.description);
+      if (rules) return rules;
+    }
+  }
+  return { ...NO_RULES };
+}
+
+const usd = (n) => `$${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+
+function describeRules(rules, cmd) {
+  const missing = [!rules.traders.length && "traders", !rules.maxPositionUsd && "a position limit", !rules.maxLeverage && "a leverage limit", !rules.markets.length && "markets"].filter(Boolean);
+  return [
+    `Traders: ${rules.traders.length ? rules.traders.map((t) => `\`${t}\``).join(", ") : "none"}`,
+    `Limits: positions up to ${rules.maxPositionUsd ? usd(rules.maxPositionUsd) : "—"} per market · leverage up to ${rules.maxLeverage ? `${rules.maxLeverage}×` : "—"} · markets ${rules.markets.length ? rules.markets.join(", ") : "—"}`,
+    missing.length ? `Trading from the chat needs ${missing.join(", ")} (\`${cmd("hltraders")}\`, \`${cmd("hllimits")}\`).` : null,
+  ].filter(Boolean);
+}
+
+/** Proposes `rules` as the DAO's new trading rules; one rules proposal open at a time, so none undoes another. */
+async function proposeRules(ctx, dao, change, rules) {
+  const { items } = await latestProposals(dao, 20);
+  if (items.some(([, state, text]) => OPEN.has(state) && rulesIn(text))) {
+    throw new UserError("Another proposal changing the Hyperliquid trading rules is still open. Let it finish first.");
+  }
+  return makeProposal(ctx, dao, `Hyperliquid trading rules: ${change}${RULES}${JSON.stringify(rules)}`, kinds.signal());
+}
+
+const hltraders = {
+  section: "Treasury",
+  needsDao: true,
+  usage: "add|remove <account>",
+  description: "Propose adding or removing a trader who may trade the DAO's Hyperliquid account from the chat",
+  options: [
+    { name: "action", description: "add or remove", required: true, choices: ["add", "remove"] },
+    { name: "account", description: "Their NEAR account, me, or @mention them (or reply to them)", required: false },
+  ],
+  async run(ctx) {
+    const usage = `${ctx.cmd("hltraders")} add|remove <account>`;
+    const dao = requireDao(ctx);
+    const action = String(ctx.args[0] ?? "").toLowerCase();
+    if (action !== "add" && action !== "remove") throw new UserError(`Usage: \`${usage}\``);
+    if (ctx.args[1] === undefined && !ctx.replyTo) throw new UserError(`Name the trader, or reply to their message. Usage: \`${usage}\``);
+    const trader = await recipientAccount(ctx, ctx.args[1], usage);
+    const rules = await currentRules(dao);
+    const has = rules.traders.includes(trader);
+    if (action === "add" && has) throw new UserError(`\`${trader}\` is already a trader.`);
+    if (action === "remove" && !has) throw new UserError(`\`${trader}\` isn't a trader.`);
+    const traders = action === "add" ? [...rules.traders, trader] : rules.traders.filter((t) => t !== trader);
+    return proposeRules(ctx, dao, `${action === "add" ? "add" : "remove"} ${trader} as a trader`, { ...rules, traders });
+  },
+};
+
+const hllimits = {
+  section: "Treasury",
+  needsDao: true,
+  usage: "size <usd> | leverage <n> | markets <COIN,COIN...>",
+  description: "Propose the limits for trading the DAO's Hyperliquid account from the chat",
+  options: [
+    { name: "limit", description: "size, leverage or markets", required: true, choices: ["size", "leverage", "markets"] },
+    { name: "value", description: "USD per market, the highest leverage, or coins (BTC,ETH,SOL)", required: true, rest: true },
+  ],
+  async run(ctx) {
+    const usage = `${ctx.cmd("hllimits")} size <usd> | leverage <n> | markets <COIN,COIN...>`;
+    const dao = requireDao(ctx);
+    const [limit, ...rest] = ctx.args;
+    const value = rest.join(" ");
+    const rules = await currentRules(dao);
+    switch (String(limit ?? "").toLowerCase()) {
+      case "size": {
+        const n = Number(value.replace(/[$,]/g, ""));
+        if (!(n > 0)) throw new UserError(`The largest position per market, in USD. Usage: \`${usage}\``);
+        return proposeRules(ctx, dao, `positions up to ${usd(n)} per market`, { ...rules, maxPositionUsd: n });
+      }
+      case "leverage": {
+        const n = Number(value.replace(/x$/i, ""));
+        if (!Number.isInteger(n) || n < 1 || n > 50) throw new UserError(`A whole number from 1 to 50. Usage: \`${usage}\``);
+        return proposeRules(ctx, dao, `leverage up to ${n}×`, { ...rules, maxLeverage: n });
+      }
+      case "markets": {
+        const coins = [...new Set(value.split(/[\s,]+/).filter(Boolean).map((c) => c.toUpperCase()))];
+        if (!coins.length) throw new UserError(`Usage: \`${usage}\``);
+        const known = await services.hyperliquid.markets().catch(() => null);
+        const unknown = known ? coins.filter((c) => !known[c]) : [];
+        if (unknown.length) throw new UserError(`Hyperliquid has no perp market for ${unknown.join(", ")}.`);
+        return proposeRules(ctx, dao, `trade only ${coins.join(", ")}`, { ...rules, markets: coins });
+      }
+      default:
+        throw new UserError(`Usage: \`${usage}\``);
+    }
+  },
+};
+
+/** Who's trading and what for: the trader, the DAO's address, its rules, the bot's agent key, and the account. */
+async function tradingContext(ctx, dao) {
+  const [account, rules, address] = await Promise.all([userAccount(ctx), currentRules(dao), daoAddress(dao)]);
+  if (!rules.traders.includes(account.accountId)) {
+    throw new UserError(`Only the DAO's traders trade from the chat${rules.traders.length ? "" : ", and it has none yet"}. Propose one with \`${ctx.cmd("hltraders")} add <account>\`.`);
+  }
+  if (!rules.maxPositionUsd || !rules.maxLeverage || !rules.markets.length) throw new UserError(describeRules(rules, ctx.cmd).at(-1));
+  const agent = await services.hlAgents.findAgentAddress(dao.daoId);
+  const approved = agent && (await services.hyperliquid.agents(address)).some((a) => a.address.toLowerCase() === agent.toLowerCase());
+  if (!approved) throw new UserError(`The DAO hasn't approved the bot as its Hyperliquid agent yet: \`${ctx.cmd("hlagent")} bot\`, then vote and execute.`);
+  const [markets, mids, state] = await Promise.all([services.hyperliquid.markets(), services.hyperliquid.mids(), services.hyperliquid.account(address)]);
+  return { account, rules, address, agent, markets, mids, state };
+}
+
+/** Sends `actions` in order with the bot's agent key for the DAO; returns the last response. */
+async function trade(dao, actions) {
+  const key = await (await services.hlAgents.getOrCreateAgentKey(dao.daoId)).privateKey();
+  let response;
+  for (const action of actions) response = await services.hyperliquid.sendL1(key, action);
+  return response;
+}
+
+function openPosition(side) {
+  return {
+    section: "Treasury",
+    needsDao: true,
+    usage: "<coin> <usd> [leverage]",
+    description: `${side === "long" ? "Buy" : "Sell"} a ${side} position for the DAO on Hyperliquid (traders the DAO named, within its limits)`,
+    options: [
+      { name: "coin", description: "The market, e.g. ETH", required: true },
+      { name: "usd", description: "Position size in USD", required: true },
+      { name: "leverage", description: "e.g. 3x (default 1x)", required: false },
+    ],
+    async run(ctx) {
+      const usage = `${ctx.cmd(side)} <coin> <usd> [leverage]`;
+      const dao = requireDao(ctx);
+      const [rawCoin, rawUsd, rawLeverage = "1"] = ctx.args;
+      const coin = String(rawCoin ?? "").toUpperCase();
+      const amount = Number(String(rawUsd ?? "").replace(/[$,]/g, ""));
+      const leverage = Number(String(rawLeverage).replace(/x$/i, ""));
+      if (!coin || !(amount > 0) || !Number.isInteger(leverage) || leverage < 1) throw new UserError(`Usage: \`${usage}\`, e.g. \`${ctx.cmd(side)} ETH 500 3x\``);
+      const t = await tradingContext(ctx, dao);
+      if (!t.rules.markets.includes(coin)) throw new UserError(`The DAO trades only ${t.rules.markets.join(", ")}.`);
+      const market = t.markets[coin];
+      const mid = t.mids[market?.coin];
+      if (!market || !mid) throw new UserError(`Hyperliquid has no ${coin} market right now.`);
+      if (leverage > t.rules.maxLeverage || leverage > market.maxLeverage) throw new UserError(`Leverage is limited to ${Math.min(t.rules.maxLeverage, market.maxLeverage)}× here.`);
+      const isBuy = side === "long";
+      const size = amount / mid;
+      const held = Number(t.state.positions.find((p) => p.coin === market.coin)?.size ?? 0);
+      const after = Math.abs(held + (isBuy ? size : -size)) * mid;
+      if (after > t.rules.maxPositionUsd) {
+        const room = Math.max(0, t.rules.maxPositionUsd - Math.abs(held) * mid);
+        throw new UserError(`That would make the DAO's ${coin} position ${usd(after)}; the DAO allows ${usd(t.rules.maxPositionUsd)} per market${room ? ` (room for about ${usd(room)} more)` : ""}.`);
+      }
+      const order = services.hyperliquid.marketOrder(market, isBuy, size, mid);
+      if (Number(order.orders[0].s) === 0) throw new UserError(`${usd(amount)} is too small for ${coin}.`);
+      const result = services.hyperliquid.orderResult(await trade(dao, [services.hyperliquid.updateLeverage(market.asset, leverage), order]));
+      if (result.error) return reply(`⚠️ Hyperliquid didn't fill it: ${result.error}`);
+      return reply(`${isBuy ? "📈" : "📉"} ${side === "long" ? "Bought" : "Sold"} ${result.filled} ${coin} at $${result.avgPx} (≈ ${usd(Number(result.filled) * Number(result.avgPx))}), ${leverage}× leverage, for the DAO's Hyperliquid account.`);
+    },
+  };
+}
+
+const close = {
+  section: "Treasury",
+  needsDao: true,
+  usage: "<coin>",
+  description: "Close the DAO's Hyperliquid position in a market (its traders)",
+  options: [{ name: "coin", description: "The market, e.g. ETH", required: true }],
+  async run(ctx) {
+    const dao = requireDao(ctx);
+    const coin = String(ctx.args[0] ?? "").toUpperCase();
+    if (!coin) throw new UserError(`Usage: \`${ctx.cmd("close")} <coin>\``);
+    const t = await tradingContext(ctx, dao);
+    const market = t.markets[coin];
+    const held = Number(t.state.positions.find((p) => p.coin === market?.coin)?.size ?? 0);
+    if (!market || !held) throw new UserError(`The DAO has no ${coin} position.`);
+    // Closing is always allowed for a trader, whatever the limits: it only reduces the position.
+    const order = services.hyperliquid.marketOrder(market, held < 0, Math.abs(held), t.mids[market.coin], { reduceOnly: true });
+    const result = services.hyperliquid.orderResult(await trade(dao, [order]));
+    if (result.error) return reply(`⚠️ Hyperliquid didn't fill it: ${result.error}`);
+    return reply(`✅ Closed ${result.filled} ${coin} at $${result.avgPx} for the DAO's Hyperliquid account.`);
+  },
+};
+
+export const HYPERLIQUID_COMMANDS = { hyperliquid, hlagent, hlrevoke, hlsend, hltraders, hllimits, long: openPosition("long"), short: openPosition("short"), close };

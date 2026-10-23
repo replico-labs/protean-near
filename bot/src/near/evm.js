@@ -212,5 +212,5 @@ export function txsIn(description) {
   }
 }
 
-/** What people should read: the description without the transactions. */
-export const readable = (description) => String(description ?? "").split(MARKER)[0];
+/** What people should read: the description without what it carries for the bot (transactions, Hyperliquid rules). */
+export const readable = (description) => String(description ?? "").split("\n\n---\n")[0];

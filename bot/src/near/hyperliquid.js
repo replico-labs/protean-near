@@ -1,4 +1,6 @@
-import { hashTypedData, recoverAddress } from "viem";
+import { encode as msgpack } from "@msgpack/msgpack";
+import { hashTypedData, recoverAddress, keccak256, concat, numberToBytes, parseSignature } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { NETWORK_ID } from "../config.js";
 
 /**
@@ -111,4 +113,87 @@ export async function account(address) {
     withdrawable: state.withdrawable ?? "0",
     positions: (state.assetPositions ?? []).map((p) => ({ coin: p.position.coin, size: p.position.szi, value: p.position.positionValue })),
   };
+}
+
+// --- Trading through a bot-held agent ---
+//
+// The DAO can approve an agent whose key the bot holds (encrypted with KMS),
+// so its named traders trade from the chat within limits the DAO set. An
+// agent signs Hyperliquid's L1 actions (orders, leverage) for the DAO's
+// account; it can never withdraw. Formats and hashing follow the Python
+// SDK (signing.py: action_hash, construct_phantom_agent, l1_payload).
+
+/** What an agent signs for L1 `action` at `nonce`: the "phantom agent" EIP-712 message over the action's hash. */
+export function l1Digest(action, nonce, mainnet = NETWORK_ID === "mainnet") {
+  const connectionId = keccak256(concat([msgpack(action), numberToBytes(BigInt(nonce), { size: 8 }), new Uint8Array([0])]));
+  return hashTypedData({
+    domain: { chainId: 1337, name: "Exchange", verifyingContract: "0x0000000000000000000000000000000000000000", version: "1" },
+    types: { Agent: [{ name: "source", type: "string" }, { name: "connectionId", type: "bytes32" }] },
+    primaryType: "Agent",
+    message: { source: mainnet ? "a" : "b", connectionId },
+  });
+}
+
+/** Signs L1 `action` with the agent's `privateKey` and posts it. Returns Hyperliquid's `response`. */
+export async function sendL1(privateKey, action) {
+  const nonce = Date.now();
+  const signature = parseSignature(await privateKeyToAccount(privateKey).sign({ hash: l1Digest(action, nonce) }));
+  const response = await post("/exchange", { action, nonce, signature: { r: signature.r, s: signature.s, v: Number(signature.v) }, vaultAddress: null });
+  if (response?.status !== "ok") throw new Error(`Hyperliquid: ${typeof response?.response === "string" ? response.response : JSON.stringify(response?.response ?? response)}`);
+  return response.response;
+}
+
+let marketsCache = null;
+/** Perp markets by coin: { asset (index), szDecimals, maxLeverage }; re-read every 10 minutes. */
+export async function markets() {
+  if (!marketsCache || Date.now() - marketsCache.at > 600_000) {
+    const { universe } = await post("/info", { type: "meta" });
+    const byCoin = {};
+    universe.forEach((m, asset) => {
+      if (!m.isDelisted) byCoin[m.name.toUpperCase()] = { coin: m.name, asset, szDecimals: m.szDecimals, maxLeverage: m.maxLeverage };
+    });
+    marketsCache = { at: Date.now(), byCoin };
+  }
+  return marketsCache.byCoin;
+}
+
+/** Mid prices by coin, as numbers. */
+export async function mids() {
+  return Object.fromEntries(Object.entries(await post("/info", { type: "allMids" })).map(([coin, px]) => [coin, Number(px)]));
+}
+
+/** The agents `address` has approved: [{ name, address, validUntil }]. */
+export const agents = (address) => post("/info", { type: "extraAgents", user: address });
+
+/** `n` with at most `decimals` decimals, rounded down, as Hyperliquid wants it (no trailing zeros). */
+export function wireNumber(n, decimals) {
+  const factor = 10 ** decimals;
+  const fixed = (Math.floor(n * factor + 1e-9) / factor).toFixed(decimals);
+  return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+}
+
+/** A perp price Hyperliquid accepts: at most 5 significant figures and 6 - szDecimals decimals (whole numbers always). */
+export function wirePrice(px, szDecimals) {
+  if (px >= 1e5) return String(Math.round(px));
+  const significant = Number(px.toPrecision(5));
+  return wireNumber(significant, Math.max(0, 6 - szDecimals)).replace(/^$/, "0");
+}
+
+/** Sets `asset`'s leverage for the account (cross margin). */
+export const updateLeverage = (asset, leverage) => ({ type: "updateLeverage", asset, isCross: true, leverage });
+
+/**
+ * A market order: immediate-or-cancel at `slippage` past the mid, so it
+ * fills now at the best prices up to that, or not at all.
+ */
+export function marketOrder({ asset, szDecimals }, isBuy, size, mid, { reduceOnly = false, slippage = 0.01 } = {}) {
+  const px = wirePrice(mid * (isBuy ? 1 + slippage : 1 - slippage), szDecimals);
+  return { type: "order", orders: [{ a: asset, b: isBuy, p: px, s: wireNumber(size, szDecimals), r: reduceOnly, t: { limit: { tif: "Ioc" } } }], grouping: "na" };
+}
+
+/** What an order did, from its `response`: { filled, avgPx } or { error }. */
+export function orderResult(response) {
+  const status = response?.data?.statuses?.[0] ?? {};
+  if (status.filled) return { filled: status.filled.totalSz, avgPx: status.filled.avgPx };
+  return { error: status.error ?? (status.resting ? "it didn't fill at once and was left resting" : "no fill") };
 }

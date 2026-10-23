@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { supabaseMessage, supabaseUrl } from "./supabaseError.js";
-import { createEncryptedKey, decryptKey, isKmsWalletConfigured } from "./kmsWallet.js";
+import { createEncryptedKey, decryptKey, isKmsWalletConfigured, encryptSecret, decryptSecret } from "./kmsWallet.js";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 /**
  * Supabase storage for users' NEAR account keys (the `wallets` table in
@@ -67,4 +68,43 @@ export function walletKey(record) {
     iv: record.iv,
     authTag: record.auth_tag,
   });
+}
+
+// --- Hyperliquid agents the bot holds for DAOs ---
+//
+// A DAO that approves the bot as its Hyperliquid agent gets an EVM key the
+// bot generated, kept in the same table, encrypted the same way: platform
+// "hyperliquid", keyed by the DAO's account, its address as the public key.
+// The key can trade for the DAO's Hyperliquid account; it can't withdraw.
+
+const AGENT_PLATFORM = "hyperliquid";
+
+/** The DAO's agent { address, privateKey() }, generating and storing a key the first time. */
+export async function getOrCreateAgentKey(daoId) {
+  let record = await findWalletRecord(AGENT_PLATFORM, daoId);
+  if (!record) {
+    const privateKey = generatePrivateKey();
+    const secret = await encryptSecret(privateKey);
+    const { error } = await getSupabaseClient().from("wallets").insert({
+      platform: AGENT_PLATFORM,
+      platform_user_id: daoId,
+      account_id: `hyperliquid-agent:${daoId}`,
+      public_key: privateKeyToAccount(privateKey).address,
+      encrypted_private_key: secret.ciphertext,
+      encrypted_data_key: secret.encryptedDataKey,
+      iv: secret.iv,
+      auth_tag: secret.authTag,
+    });
+    if (error && error.code !== "23505") throw new Error(`Supabase insert failed: ${supabaseMessage(error)}`);
+    record = await findWalletRecord(AGENT_PLATFORM, daoId);
+  }
+  return {
+    address: record.public_key,
+    privateKey: () => decryptSecret({ ciphertext: record.encrypted_private_key, encryptedDataKey: record.encrypted_data_key, iv: record.iv, authTag: record.auth_tag }),
+  };
+}
+
+/** The DAO's agent address, or null if the bot holds none for it. */
+export async function findAgentAddress(daoId) {
+  return (await findWalletRecord(AGENT_PLATFORM, daoId))?.public_key ?? null;
 }
