@@ -15,7 +15,8 @@ const CHAINS = {
   base: {
     mainnet: {
       chainId: 8453,
-      rpc: "https://mainnet.base.org",
+      // Base's public RPC, then PublicNode's; BASE_RPC_URL replaces them (comma-separated).
+      rpc: "https://mainnet.base.org,https://base-rpc.publicnode.com",
       usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       aavePool: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
       aUsdc: "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
@@ -25,7 +26,7 @@ const CHAINS = {
     },
     testnet: {
       chainId: 84532,
-      rpc: "https://sepolia.base.org",
+      rpc: "https://sepolia.base.org,https://base-sepolia-rpc.publicnode.com",
       usdc: "0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f",
       aavePool: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
       aUsdc: "0x10F1A9D11CDf50041f3f8cB7191CBE2f31750ACC",
@@ -41,11 +42,39 @@ export function base() {
   return { name: NETWORK_ID === "mainnet" ? "Base" : "Base Sepolia", ...config, rpc: process.env.BASE_RPC_URL || config.rpc };
 }
 
-async function rpc(chain, method, params = []) {
-  const res = await fetch(chain.rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-  const body = await res.json();
+/** An RPC that didn't answer usefully (down, rate-limited, an empty reply): the next one is tried. */
+class RpcUnavailable extends Error {}
+
+async function rpcAt(url, chain, method, params) {
+  let res, text;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+    text = await res.text();
+  } catch (err) {
+    throw new RpcUnavailable(`${chain.name} RPC unreachable: ${err.message}`);
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new RpcUnavailable(`${chain.name} RPC answered ${res.status} ${res.statusText}`.trim() + (text ? `: ${text.slice(0, 100)}` : " with nothing"));
+  }
   if (body.error) throw new Error(`${chain.name}: ${body.error.message}`);
   return body.result;
+}
+
+/** `method` on `chain`, trying each of its RPCs in turn while they're unavailable. */
+async function rpc(chain, method, params = []) {
+  let unavailable;
+  for (const url of chain.rpc.split(",").map((u) => u.trim()).filter(Boolean)) {
+    try {
+      return await rpcAt(url, chain, method, params);
+    } catch (err) {
+      if (!(err instanceof RpcUnavailable)) throw err;
+      unavailable = err;
+    }
+  }
+  throw unavailable;
 }
 
 const ERC20 = [
@@ -120,7 +149,8 @@ export function aaveWithdrawEthCalls(chain, owner, amount) {
  */
 export async function txParams(chain, from) {
   const [nonce, block, tip] = await Promise.all([
-    rpc(chain, "eth_getTransactionCount", [from, "pending"]),
+    // Some RPCs (Base Sepolia's) refuse "pending"; one open EVM proposal at a time keeps "latest" right.
+    rpc(chain, "eth_getTransactionCount", [from, "pending"]).catch(() => rpc(chain, "eth_getTransactionCount", [from, "latest"])),
     rpc(chain, "eth_getBlockByNumber", ["latest", false]),
     rpc(chain, "eth_maxPriorityFeePerGas").catch(() => "0x0"),
   ]);

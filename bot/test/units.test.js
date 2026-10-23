@@ -223,3 +223,27 @@ test("SUPABASE_URL keeps only the project URL, even when the REST path is pasted
   assert.equal(supabaseUrl(" https://abcd.supabase.co/rest/v1/ "), "https://abcd.supabase.co");
   assert.throws(() => supabaseUrl("abcd.supabase.co"), /Project URL/);
 });
+
+test("Base RPC: an empty 503 moves to the next RPC, and a refused pending nonce falls back to the latest", async () => {
+  const evm = await import("../src/near/evm.js");
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    const { method, params } = JSON.parse(init.body);
+    seen.push([url, method, params?.[1]]);
+    const answer = (result) => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+    if (url === "https://down.example") return new Response("", { status: 503, statusText: "Service Unavailable" });
+    if (method === "eth_getTransactionCount") return params[1] === "pending" ? new Response("", { status: 503 }) : answer("0x7");
+    if (method === "eth_getBlockByNumber") return answer({ baseFeePerGas: "0x3b9aca00" });
+    return answer("0x0");
+  };
+  try {
+    const chain = { name: "Base Sepolia", rpc: "https://down.example, https://up.example" };
+    const params = await evm.txParams(chain, "0x00000000000000000000000000000000000000AA");
+    assert.equal(params.nonce, 7);
+    assert.ok(seen.some(([url, method, tag]) => url === "https://up.example" && method === "eth_getTransactionCount" && tag === "latest"));
+    await assert.rejects(evm.txParams({ name: "Base Sepolia", rpc: "https://down.example" }, "0x00000000000000000000000000000000000000AA"), /Base Sepolia RPC answered 503 Service Unavailable with nothing/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
