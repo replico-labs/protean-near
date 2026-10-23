@@ -48,6 +48,15 @@ const TYPES = {
       { name: "nonce", type: "uint64" },
     ],
   },
+  usdClassTransfer: {
+    primaryType: "HyperliquidTransaction:UsdClassTransfer",
+    fields: [
+      { name: "hyperliquidChain", type: "string" },
+      { name: "amount", type: "string" },
+      { name: "toPerp", type: "bool" },
+      { name: "nonce", type: "uint64" },
+    ],
+  },
   usdSend: {
     primaryType: "HyperliquidTransaction:UsdSend",
     fields: [
@@ -87,6 +96,12 @@ export const approveAgent = (agentAddress, agentName, nonce) => ({ ...base("appr
 /** Sends `amount` USDC (a decimal string) from the DAO's Hyperliquid account to `destination`. */
 export const usdSend = (destination, amount, time) => ({ ...base("usdSend"), destination, amount, time });
 
+/**
+ * Moves `amount` USDC (a decimal string) between the DAO's spot balance and
+ * its perps balance, which trading uses: `toPerp` true moves it to perps.
+ */
+export const usdClassTransfer = (amount, toPerp, nonce) => ({ ...base("usdClassTransfer"), amount, toPerp, nonce });
+
 /** The nonce Hyperliquid expects alongside `action`. */
 export const nonceOf = (action) => action.nonce ?? action.time;
 
@@ -105,13 +120,18 @@ export async function submit(action, signature, from) {
   return response;
 }
 
-/** The DAO's account: { accountValue, withdrawable, positions: [{ coin, size, value }] }. */
+/**
+ * The DAO's account: its perps balance, which trading uses ({ accountValue,
+ * withdrawable, positions: [{ coin, size, value }] }), and the USDC in its
+ * separate spot balance (`spotUsdc`).
+ */
 export async function account(address) {
-  const state = await post("/info", { type: "clearinghouseState", user: address });
+  const [state, spot] = await Promise.all([post("/info", { type: "clearinghouseState", user: address }), post("/info", { type: "spotClearinghouseState", user: address }).catch(() => null)]);
   return {
     accountValue: state.marginSummary?.accountValue ?? "0",
     withdrawable: state.withdrawable ?? "0",
     positions: (state.assetPositions ?? []).map((p) => ({ coin: p.position.coin, size: p.position.szi, value: p.position.positionValue })),
+    spotUsdc: spot?.balances?.find((b) => b.coin === "USDC")?.total ?? "0",
   };
 }
 

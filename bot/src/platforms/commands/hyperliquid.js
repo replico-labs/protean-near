@@ -60,12 +60,15 @@ const hyperliquid = {
     return reply(
       [
         `*Hyperliquid account* \`${address}\``,
-        `Value: $${account.accountValue} · Withdrawable: ${account.withdrawable} USDC`,
+        `Perps (trading): $${account.accountValue} · Withdrawable: ${account.withdrawable} USDC`,
         positions,
+        Number(account.spotUsdc) > 0 ? `Spot: ${account.spotUsdc} USDC, not usable for trading until moved: \`${ctx.cmd("hlmove")} all perps\`` : null,
         ...(rules ? ["", "*Trading from the chat*", ...describeRules(rules, ctx.cmd)] : []),
         agent ? `The bot's agent: \`${agent}\` (approved with \`${ctx.cmd("hlagent")} bot\`)` : `Let traders trade from the chat: \`${ctx.cmd("hlagent")} bot\``,
         `Fund it: \`${ctx.cmd("paychain")} <amount> USDC@hypercore dao <description>\``,
-      ].join("\n"),
+      ]
+        .filter((line) => line !== null)
+        .join("\n"),
     );
   },
 };
@@ -132,6 +135,40 @@ const hlsend = {
     const { nonce, validUntil } = services.hyperliquid.nonceForProposal();
     const action = services.hyperliquid.usdSend(destination, amount, nonce);
     return proposeHyperliquid(ctx, dao, `Send ${amount} USDC from the DAO's Hyperliquid account to ${destination}`, [action], validUntil);
+  },
+};
+
+const hlmove = {
+  section: "Treasury",
+  needsDao: true,
+  usage: "<amount|all> perps|spot",
+  description: "Propose moving the DAO's Hyperliquid USDC between its spot balance and perps (trading)",
+  options: [
+    { name: "amount", description: "USDC, or all", required: true },
+    { name: "to", description: "perps (default) or spot", required: false, choices: ["perps", "spot"] },
+  ],
+  async run(ctx) {
+    const usage = `${ctx.cmd("hlmove")} <amount|all> perps|spot`;
+    const dao = requireDao(ctx);
+    const [rawAmount, rawTo = "perps"] = ctx.args;
+    const to = String(rawTo).toLowerCase();
+    if (to !== "perps" && to !== "spot") throw new UserError(`Usage: \`${usage}\``);
+    const toPerp = to === "perps";
+    const account = await services.hyperliquid.account(await daoAddress(dao)).catch(() => null);
+    const available = account ? (toPerp ? account.spotUsdc : account.withdrawable) : null;
+    let amount;
+    if (String(rawAmount).toLowerCase() === "all") {
+      if (available === null) throw new UserError("Couldn't read the DAO's Hyperliquid account right now; give an amount.");
+      if (!(Number(available) > 0)) throw new UserError(`The DAO has no USDC ${toPerp ? "in spot" : "free in perps"} to move.`);
+      // Hyperliquid takes amounts as decimal strings; keep what it reported, at most 6 decimals.
+      amount = fromUnits(parseAmount(available, 6, usage), 6, 6);
+    } else {
+      amount = fromUnits(parseAmount(rawAmount, 6, usage), 6, 6);
+      if (available !== null && Number(available) < Number(amount)) throw new UserError(`The DAO has ${available} USDC ${toPerp ? "in spot" : "free in perps"}.`);
+    }
+    const { nonce, validUntil } = services.hyperliquid.nonceForProposal();
+    const action = services.hyperliquid.usdClassTransfer(amount, toPerp, nonce);
+    return proposeHyperliquid(ctx, dao, `Move ${amount} USDC in the DAO's Hyperliquid account from ${toPerp ? "spot to perps, for trading" : "perps to spot"}`, [action], validUntil);
   },
 };
 
@@ -344,4 +381,4 @@ const close = {
   },
 };
 
-export const HYPERLIQUID_COMMANDS = { hyperliquid, hlagent, hlrevoke, hlsend, hltraders, hllimits, long: openPosition("long"), short: openPosition("short"), close };
+export const HYPERLIQUID_COMMANDS = { hyperliquid, hlagent, hlrevoke, hlsend, hlmove, hltraders, hllimits, long: openPosition("long"), short: openPosition("short"), close };

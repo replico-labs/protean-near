@@ -146,7 +146,8 @@ async function relayHyperliquid(payload, outcome) {
       try {
         await services.hyperliquid.submit(action, signature, payload.from);
         unused.splice(j, 1);
-        lines.push(`✅ Hyperliquid accepted ${action.type === "approveAgent" ? `the agent ${action.agentAddress}` : `sending ${action.amount} USDC to ${action.destination}`}`);
+        const what = { approveAgent: () => `the agent ${action.agentAddress}`, usdClassTransfer: () => `moving ${action.amount} USDC to ${action.toPerp ? "perps (trading)" : "spot"}` }[action.type]?.() ?? `sending ${action.amount} USDC to ${action.destination}`;
+        lines.push(`✅ Hyperliquid accepted ${what}`);
         done = true;
         break;
       } catch (err) {

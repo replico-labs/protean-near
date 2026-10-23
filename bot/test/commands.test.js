@@ -725,6 +725,19 @@ test("trading from the chat: a vote names the traders and limits; only traders t
   assert.deepEqual(calls.filter((c) => c[0] === "sendL1").at(-1)[2].orders[0], { a: 1, b: false, p: "3267", s: "0.1", r: true, t: { limit: { tif: "Ioc" } } });
 });
 
+test("hlmove proposes moving the DAO's spot USDC to perps, where trading can use it", async () => {
+  linked();
+  services.hyperliquid.account = async () => ({ accountValue: "0.0", withdrawable: "0.0", positions: [], spotUsdc: "151.0" });
+  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Spot: 151\.0 USDC, not usable for trading until moved: `\/hlmove all perps`/);
+  assert.match((await runCommand("hlmove", ctx(["500"]))).text, /has 151\.0 USDC in spot/);
+  await runCommand("hlmove", ctx(["all", "perps"]));
+  const [action] = realEvm.txsIn(state.proposals.at(-1).description).actions;
+  assert.deepEqual([action.type, action.amount, action.toPerp, action.hyperliquidChain], ["usdClassTransfer", "151", true, "Testnet"]);
+  assert.match(realEvm.readable(state.proposals.at(-1).description), /^Move 151 USDC in the DAO's Hyperliquid account from spot to perps, for trading/);
+  assert.match(realHyperliquid.digest(action), /^0x[0-9a-f]{64}$/, "signs as HyperliquidTransaction:UsdClassTransfer");
+  assert.match((await runCommand("hlmove", ctx(["1", "sideways"]))).text, /Usage/);
+});
+
 test("paychain can pay the DAO's own EVM address", async () => {
   linked();
   await runCommand("paychain", ctx(["1", "USDC@sol", "dao", "x"]));
@@ -763,5 +776,5 @@ test("hlrevoke replaces the agent with an address nobody holds; hlsend checks wh
   calls = [];
   await runCommand("hlsend", ctx(["12.50", "0x2222222222222222222222222222222222222222"]));
   assert.equal(realEvm.txsIn(calls.find((c) => c[0] === "propose")[2]).actions[0].amount, "12.5");
-  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Value: \$120 · Withdrawable: 50 USDC[\s\S]*ETH: 0\.1/);
+  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Perps \(trading\): \$120 · Withdrawable: 50 USDC[\s\S]*ETH: 0\.1/);
 });
