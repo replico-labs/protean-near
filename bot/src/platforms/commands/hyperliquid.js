@@ -57,6 +57,9 @@ const hyperliquid = {
     const positions = account.positions.length ? account.positions.map((p) => `• ${p.coin}: ${p.size} (≈ $${p.value})`).join("\n") : "No open positions.";
     const rules = await currentRules(dao).catch(() => null);
     const agent = await services.hlAgents.findAgentAddress(dao.daoId).catch(() => null);
+    // Agents other than the bot's (approved before only the bot could be one) trade outside the DAO's limits.
+    const others = (await services.hyperliquid.agents(address).catch(() => [])).filter((a) => a.address.toLowerCase() !== agent?.toLowerCase());
+    const warnings = others.map((a) => `⚠️ Another agent can trade this account outside the DAO's limits: \`${a.address}\` ("${a.name}"). Remove it: \`${ctx.cmd("hlrevoke")} ${a.name}\``);
     return reply(
       [
         `*Hyperliquid account* \`${address}\``,
@@ -64,7 +67,8 @@ const hyperliquid = {
         positions,
         Number(account.spotUsdc) > 0 ? `Spot: ${account.spotUsdc} USDC, not usable for trading until moved: \`${ctx.cmd("hlmove")} all perps\`` : null,
         ...(rules ? ["", "*Trading from the chat*", ...describeRules(rules, ctx.cmd)] : []),
-        agent ? `The bot's agent: \`${agent}\` (approved with \`${ctx.cmd("hlagent")} bot\`)` : `Let traders trade from the chat: \`${ctx.cmd("hlagent")} bot\``,
+        agent ? `The bot's agent: \`${agent}\` (approved with \`${ctx.cmd("hlagent")}\`)` : `Let traders trade from the chat: \`${ctx.cmd("hlagent")}\``,
+        ...warnings,
         `Fund it: \`${ctx.cmd("paychain")} <amount> USDC@hypercore dao <description>\``,
       ]
         .filter((line) => line !== null)
@@ -73,27 +77,37 @@ const hyperliquid = {
   },
 };
 
+/**
+ * Only the bot's own key for the DAO can become its agent. An agent can't
+ * withdraw, but one held by a person or another program would trade
+ * outside the bot, past the traders and limits the DAO voted for, and
+ * could empty the account through bad trades.
+ */
 const hlagent = {
   section: "Treasury",
   needsDao: true,
-  usage: "<address|bot> [name]",
-  description: "Propose a Hyperliquid trading agent for the DAO (an address, or bot to trade from the chat): it can trade, never withdraw",
-  options: [
-    { name: "address", description: "The agent's EVM address (a trader, an AI agent), or bot", required: true },
-    { name: "name", description: `Agent name (default ${DEFAULT_AGENT}); a new agent with the same name replaces the old one`, required: false },
-  ],
+  usage: "",
+  description: "Propose the bot as the DAO's Hyperliquid trading agent, so the traders the DAO names trade from the chat within its limits; it can trade, never withdraw",
+  options: [],
   async run(ctx) {
-    const usage = `${ctx.cmd("hlagent")} <address|bot> [name]`;
     const dao = requireDao(ctx);
-    const [raw, name = DEFAULT_AGENT] = ctx.args;
-    const byBot = String(raw ?? "").toLowerCase() === "bot";
-    // "bot": a key the bot generates and keeps for this DAO, so its named traders can trade from the chat.
-    const agent = byBot ? (await services.hlAgents.getOrCreateAgentKey(dao.daoId)).address : raw;
-    if (!EVM_ADDRESS.test(agent ?? "")) throw new UserError(`\`${raw ?? ""}\` isn't an EVM address. Usage: \`${usage}\``);
+    const [raw] = ctx.args;
+    if (raw !== undefined && String(raw).toLowerCase() !== "bot") {
+      throw new UserError(
+        `Only the bot can be the DAO's Hyperliquid agent: \`${ctx.cmd("hlagent")}\`. An agent held by anyone else would trade outside the traders and limits the DAO votes for (\`${ctx.cmd("hltraders")}\`, \`${ctx.cmd("hllimits")}\`).`
+      );
+    }
+    // A key the bot generates and keeps for this DAO (KMS-encrypted), used only for the chat's trades.
+    const agent = (await services.hlAgents.getOrCreateAgentKey(dao.daoId)).address;
     const { nonce, validUntil } = services.hyperliquid.nonceForProposal();
-    const action = services.hyperliquid.approveAgent(agent, name, nonce);
-    const who = byBot ? `the bot's agent ${agent}, so the traders the DAO names can trade from the chat within its limits (\`${ctx.cmd("hltraders")}\`, \`${ctx.cmd("hllimits")}\`)` : agent;
-    return proposeHyperliquid(ctx, dao, `Appoint ${who} as the DAO's Hyperliquid trading agent "${name}": it can place and cancel orders, but not withdraw`, [action], validUntil);
+    const action = services.hyperliquid.approveAgent(agent, DEFAULT_AGENT, nonce);
+    return proposeHyperliquid(
+      ctx,
+      dao,
+      `Appoint the bot's agent ${agent} as the DAO's Hyperliquid trading agent "${DEFAULT_AGENT}", so the traders the DAO names can trade from the chat within its limits (\`${ctx.cmd("hltraders")}\`, \`${ctx.cmd("hllimits")}\`): it can place and cancel orders, but not withdraw`,
+      [action],
+      validUntil
+    );
   },
 };
 
@@ -304,7 +318,7 @@ async function tradingContext(ctx, dao) {
   if (!rules.maxPositionUsd || !rules.maxLeverage || !rules.markets.length) throw new UserError(describeRules(rules, ctx.cmd).at(-1));
   const agent = await services.hlAgents.findAgentAddress(dao.daoId);
   const approved = agent && (await services.hyperliquid.agents(address)).some((a) => a.address.toLowerCase() === agent.toLowerCase());
-  if (!approved) throw new UserError(`The DAO hasn't approved the bot as its Hyperliquid agent yet: \`${ctx.cmd("hlagent")} bot\`, then vote and execute.`);
+  if (!approved) throw new UserError(`The DAO hasn't approved the bot as its Hyperliquid agent yet: \`${ctx.cmd("hlagent")}\`, then vote and execute.`);
   const [markets, mids, state] = await Promise.all([services.hyperliquid.markets(), services.hyperliquid.mids(), services.hyperliquid.account(address)]);
   return { account, rules, address, agent, markets, mids, state };
 }

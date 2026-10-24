@@ -745,10 +745,14 @@ test("paychain can pay the DAO's own EVM address", async () => {
   assert.ok(!calls.some((c) => c[0] === "quote"), "Solana isn't an EVM chain");
 });
 
-test("hlagent proposes an agent that can trade, not withdraw; executing posts it to Hyperliquid", async () => {
+test("hlagent proposes only the bot's agent, which can trade, not withdraw; executing posts it to Hyperliquid", async () => {
   linked();
+  const refused = await runCommand("hlagent", ctx(["0x1111111111111111111111111111111111111111"]));
+  assert.match(refused.text, /Only the bot can be the DAO's Hyperliquid agent/);
+  assert.ok(!calls.some((c) => c[0] === "propose"), "an outside address is never proposed");
   const agent = "0x1111111111111111111111111111111111111111";
-  const r = await runCommand("hlagent", ctx([agent]));
+  services.hlAgents = { getOrCreateAgentKey: async () => ({ address: agent }), findAgentAddress: async () => agent };
+  const r = await runCommand("hlagent", ctx([]));
   assert.match(r.text, /New proposal/);
   const [, , description, kind] = calls.find((c) => c[0] === "propose");
   const payload = realEvm.txsIn(description);
@@ -763,7 +767,7 @@ test("hlagent proposes an agent that can trade, not withdraw; executing posts it
   state.signatures = [{ r: "0x09", s: "0x01", yParity: 0 }, { r: "0x0a", s: "0x01", yParity: 0 }];
   const executed = await runCommand("execute", ctx(["0"]));
   assert.deepEqual(calls.find((c) => c[0] === "hlSubmit")[1], action);
-  assert.match(executed.text, /Hyperliquid accepted the agent 0x1{40}/);
+  assert.match(executed.text, new RegExp(`Hyperliquid accepted the agent ${agent}`));
 });
 
 test("hlrevoke replaces the agent with an address nobody holds; hlsend checks what's withdrawable", async () => {
@@ -773,9 +777,15 @@ test("hlrevoke replaces the agent with an address nobody holds; hlsend checks wh
   assert.equal(action.agentName, "protean");
   assert.match(action.agentAddress, /^0x[0-9a-fA-F]{40}$/);
   assert.match((await runCommand("hlsend", ctx(["60", "0x2222222222222222222222222222222222222222"]))).text, /50 USDC withdrawable/);
-  assert.match((await runCommand("hlagent", ctx(["bob.near"]))).text, /isn't an EVM address/);
+  assert.match((await runCommand("hlagent", ctx(["bob.near"]))).text, /Only the bot can be/);
   calls = [];
   await runCommand("hlsend", ctx(["12.50", "0x2222222222222222222222222222222222222222"]));
   assert.equal(realEvm.txsIn(calls.find((c) => c[0] === "propose")[2]).actions[0].amount, "12.5");
   assert.match((await runCommand("hyperliquid", ctx([]))).text, /Perps \(trading\): \$120 · Withdrawable: 50 USDC[\s\S]*ETH: 0\.1/);
+  // An agent from before only the bot could be one is flagged, with how to remove it.
+  services.hlAgents = { findAgentAddress: async () => "0xb0b0000000000000000000000000000000000000" };
+  services.hyperliquid = { ...services.hyperliquid, agents: async () => [{ name: "desk", address: "0x1111111111111111111111111111111111111111" }, { name: "protean", address: "0xb0b0000000000000000000000000000000000000" }] };
+  const shown = (await runCommand("hyperliquid", ctx([]))).text;
+  assert.match(shown, /⚠️ Another agent can trade this account outside the DAO's limits: `0x1{40}` \("desk"\)\. Remove it: `\/hlrevoke desk`/);
+  assert.equal(shown.match(/⚠️/g).length, 1, "the bot's own agent isn't flagged");
 });

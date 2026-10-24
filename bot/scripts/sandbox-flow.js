@@ -288,7 +288,7 @@ if (process.env.CHAIN_SIGNER_ID) {
   await run(3, `execute ${ethId}`, { expect: /already executed/ });
   console.log("  ✔ the outcome was read by hash after the RPC gave up; the second /execute sent the signed depositETH (0.002 ETH to Aave's gateway)");
 
-  step("Hyperliquid: appoint a trading agent by proposal; the DAO's key signs Hyperliquid's approveAgent");
+  step("Hyperliquid: only the bot can be the DAO's trading agent");
   // Hyperliquid's API isn't reachable from a sandbox: the post is stood in for, after the same signature check.
   const realHl = await import("../src/near/hyperliquid.js");
   const { recoverAddress } = await import("viem");
@@ -303,12 +303,8 @@ if (process.env.CHAIN_SIGNER_ID) {
       return { status: "ok" };
     },
   };
-  const agent = "0x1111111111111111111111111111111111111111";
-  await pass(await propose(`hlagent ${agent} desk`));
-  assert.equal(accepted.length, 1);
-  assert.deepEqual([accepted[0].action.type, accepted[0].action.agentAddress, accepted[0].action.agentName], ["approveAgent", agent, "desk"]);
-  assert.equal(accepted[0].signer.toLowerCase(), address.toLowerCase());
-  console.log(`  ✔ the DAO's address signed approveAgent for ${agent} ("desk"): it can trade for the DAO, never withdraw`);
+  await run(1, "hlagent 0x1111111111111111111111111111111111111111", { expect: /Only the bot can be the DAO's Hyperliquid agent/ });
+  console.log("  ✔ an outside address is refused: an agent held by anyone else would trade outside the DAO's traders and limits");
 
   step("Hyperliquid from the chat: the DAO votes in a trader and limits, approves the bot as its agent, and the trader trades within them");
   // The bot's agent key would live in Supabase, encrypted with KMS; here it's kept in memory.
@@ -336,7 +332,10 @@ if (process.env.CHAIN_SIGNER_ID) {
   const rules = await (await import("../src/platforms/commands/hyperliquid.js")).currentRules(link());
   assert.deepEqual(rules, { traders: [account(1)], maxPositionUsd: 1000, maxLeverage: 5, markets: ["ETH"] });
   await run(1, "long ETH 300", { expect: /hasn't approved the bot/ });
-  await pass(await propose("hlagent bot"));
+  await pass(await propose("hlagent"));
+  assert.equal(accepted.length, 1);
+  assert.deepEqual([accepted[0].action.type, accepted[0].action.agentAddress, accepted[0].action.agentName], ["approveAgent", agentAddress, "protean"]);
+  assert.equal(accepted[0].signer.toLowerCase(), address.toLowerCase(), "the DAO's address signed approveAgent");
   await run(2, "long ETH 300", { expect: /Only the DAO's traders/ });
   await run(1, "long ETH 300 7x", { expect: /limited to 5×/ });
   await run(1, "long ETH 300 2x", { expect: /📈 Bought 0\.0909 ETH at \$3300/ });
