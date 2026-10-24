@@ -15,6 +15,20 @@ export function view(contractId, method, args = {}) {
   return provider.callFunction({ contractId, method, args });
 }
 
+let clock = { at: 0, ns: 0n };
+/**
+ * The chain's time (the latest final block's), in nanoseconds: what the
+ * contracts compare deadlines against. A sandbox's clock can run hours
+ * ahead of this machine's. Read at most every 5 seconds.
+ */
+export async function chainNowNs() {
+  if (Date.now() - clock.at > 5000) {
+    const block = await provider.viewBlock({ finality: "final" });
+    clock = { at: Date.now(), ns: BigInt(block.header.timestamp_nanosec) };
+  }
+  return clock.ns + BigInt(Date.now() - clock.at) * 1_000_000n;
+}
+
 /** Whether `accountId` exists on chain. */
 export async function accountExists(accountId) {
   try {

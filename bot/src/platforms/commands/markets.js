@@ -174,10 +174,10 @@ const forfeitbond = {
 
 const DECISION = ["decisionMarkets"];
 
-/** "NEAR" or the token symbol, as the orbit's asset name. */
+/** "NEAR" or the token symbol (or "token", as buttons say), as the orbit's asset name. */
 function assetOf(raw, token, usage) {
   if (String(raw).toUpperCase() === "NEAR") return { asset: "Near", decimals: NEAR_DECIMALS, format: (u) => `${formatNear(u)} NEAR` };
-  if (String(raw).toUpperCase() === token.symbol.toUpperCase()) return { asset: "Token", decimals: token.decimals, format: token.format };
+  if ([token.symbol.toUpperCase(), "TOKEN"].includes(String(raw).toUpperCase())) return { asset: "Token", decimals: token.decimals, format: token.format };
   throw new UserError(`Use NEAR or ${token.symbol}. Usage: \`${usage}\``);
 }
 

@@ -3,6 +3,8 @@ import * as kinds from "../../near/kinds.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, tokenInfo, explain, accountLink, copyableAccount } from "../helpers.js";
 import { describeProposal, loadProposal } from "../proposals.js";
+import { proposalCreated } from "../../proposalPages.js";
+import { markAnnounced } from "../notifier.js";
 
 const MODEL_NAMES = Object.keys(MODELS);
 const modelName = (raw) => MODEL_NAMES.find((m) => m.toLowerCase() === String(raw ?? "").toLowerCase());
@@ -138,7 +140,8 @@ const switchmodel = {
     );
     services.db.setChatDao(ctx.platform, ctx.chatId, { ...dao, pendingSwap: { orbitId: newOrbit, model, proposalId: id } });
     const p = await loadProposal(dao, id, token);
-    return reply(`🔀 Proposed switching to *${model}*. The new orbit \`${newOrbit}\` is ready and takes over if this passes.\n\n${describeProposal(p, token)}`, { buttons: p.buttons });
+    if (dao.model !== "board") markAnnounced(ctx.platform, ctx.chatId, id, p.state);
+    return reply(`🔀 Proposed switching to *${model}*. The new orbit \`${newOrbit}\` is ready and takes over if this passes.\n\n${describeProposal(p, token)}`, { buttons: p.buttons, private: await proposalCreated(ctx, dao, id) });
   },
 };
 

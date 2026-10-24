@@ -3,6 +3,7 @@ import { MODELS } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, parseId, formatNear, tokenInfo, formatDuration, formatTime, nowNs, copyableAccount } from "../helpers.js";
 import { loadProposal, describeProposal, latestProposals } from "../proposals.js";
+import { pendingEditLink } from "../../proposalPages.js";
 
 const bps = (b) => `${b / 100}%`;
 
@@ -135,7 +136,8 @@ const proposal = {
     const token = await tokenInfo(dao);
     const p = await loadProposal(dao, id, token);
     if (!p) throw new UserError(`There's no proposal #${id}.`);
-    return reply(describeProposal(p, token), { buttons: p.buttons });
+    // Its proposer, while the details are open, gets their edit link again.
+    return reply(describeProposal(p, token), { buttons: p.buttons, private: await pendingEditLink(ctx, dao, id) });
   },
 };
 

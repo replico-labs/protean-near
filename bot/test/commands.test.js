@@ -38,6 +38,7 @@ beforeEach(() => {
   };
   Object.assign(services, {
     isWalletStoreConfigured: () => true,
+    clock: { now: async () => BigInt(Date.now()) * 1_000_000n },
     db: {
       getChatDao: (p, c) => links[`${p}:${c}`] ?? null,
       setChatDao: (p, c, l) => (links[`${p}:${c}`] = l),

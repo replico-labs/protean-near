@@ -2,6 +2,7 @@
 import "./logRedaction.js";
 import { startTelegramBot } from "./platforms/telegram.js";
 import { startDiscordBot } from "./platforms/discord.js";
+import { proposalPagesConfigured, startProposalApi } from "./proposalPages.js";
 
 /**
  * The bot as one process, for hosting: Telegram when TELEGRAM_BOT_TOKEN is
@@ -21,11 +22,14 @@ if (!running.length) {
   console.error("Set TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, or both.");
   process.exit(1);
 }
+// Proposal pages: the website reads and saves them through this API.
+if (proposalPagesConfigured()) running.push(["http", await startProposalApi(Number(process.env.PORT || 3000))]);
 
 async function shutdown(signal) {
   console.log(`${signal}: stopping`);
   for (const [platform, handle] of running) {
-    await Promise.resolve(platform === "telegram" ? handle.isRunning() && handle.stop() : handle.destroy()).catch(() => {});
+    const stop = { telegram: () => handle.isRunning() && handle.stop(), discord: () => handle.destroy(), http: () => handle.close() }[platform];
+    await Promise.resolve().then(stop).catch(() => {});
   }
   process.exit(0);
 }

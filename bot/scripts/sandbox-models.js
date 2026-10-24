@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 
 process.env.TERM_MINUTES ??= "10";
-const { RUN, account, link, useChat, run, advance, step, propose, pass } = await import("./sandbox-lib.js");
+const { RUN, account, link, useChat, run, press, buttonCmds, advance, step, propose, pass } = await import("./sandbox-lib.js");
 const { nearToYocto } = await import("near-api-js");
 const { operatorAccount, availableBalance, view } = await import("../src/near/client.js");
 
@@ -139,6 +139,10 @@ const runs = {
     for (const u of [1, 2, 3]) await run(u, `vote ${id} for`);
     await advance(1.5);
     assert.equal((await proposal(id)).state, "Positions");
+    assert.ok(buttonCmds(await run(2, `proposal ${id}`)).includes(`ask amount position ${id} yes`), "Back YES / Back NO buttons");
+    const backYes = await press(2, `ask amount position ${id} yes`);
+    assert.match(backYes.text, /You have 50000 SOW/);
+    assert.ok(buttonCmds(backYes).includes(`position ${id} yes 50000`), "an All button for bob's 50k unstaked");
     await run(2, `position ${id} yes 1000`);
     await run(3, `position ${id} no 500`);
     await advance(62);
@@ -147,13 +151,19 @@ const runs = {
 
     step("Sowellian: after measuring, alice proposes Success, carol disputes, and stakers adjudicate");
     await advance(61);
+    assert.deepEqual(buttonCmds(await run(1, `proposal ${id}`)).slice(0, 2), [`ask sure proposeresolution ${id} success`, `ask sure proposeresolution ${id} failure`]);
+    assert.match((await press(1, `ask sure proposeresolution ${id} success`)).text, /posts the 100 SOW resolution bond/);
     await run(1, `proposeresolution ${id} success`);
+    assert.equal(buttonCmds(await run(3, `proposal ${id}`))[0], `ask sure dispute ${id}`);
     await run(3, `dispute ${id}`);
+    assert.deepEqual(buttonCmds(await run(1, `proposal ${id}`)).slice(0, 2), [`adjudicate ${id} success`, `adjudicate ${id} failure`]);
     await run(1, `adjudicate ${id} success`);
     await run(2, `adjudicate ${id} success`);
     await run(3, `adjudicate ${id} failure`);
     await advance(61);
+    assert.equal(buttonCmds(await run(1, `proposal ${id}`))[0], `finalizeresolution ${id}`, "Close the vote");
     await run(1, `finalizeresolution ${id}`, { expect: /resolved: \*success\*/ });
+    assert.equal(buttonCmds(await run(2, `proposal ${id}`))[0], `claimposition ${id}`);
     const bobBefore = await tokens(2);
     await run(2, `claimposition ${id}`, { expect: /collected/ });
     assert.equal((await tokens(2)) - bobBefore, 1500n, "YES takes the whole pool");
@@ -170,6 +180,10 @@ const runs = {
     await run(1, `seed ${id} 1000 0.2`, { expect: /Trading is open/ });
     await run(2, `split ${id} 2 NEAR`, { expect: /your account has 0\.\d+ spendable/ });
     await run(2, `split ${id} 0.2 NEAR`);
+    assert.ok(buttonCmds(await run(2, `proposal ${id}`)).includes(`ask amount trade ${id} pass near`), "trading buttons");
+    const buyPass = await press(2, `ask amount trade ${id} pass near`);
+    assert.match(buyPass.text, /You have 0\.2 pass NEAR/);
+    assert.ok(buttonCmds(buyPass).includes(`trade ${id} pass 0.2 near`));
     await run(2, `trade ${id} pass 0.15 NEAR`);
     const [exchange] = await view(link().orbitId, "get_exchange", { id });
     assert.ok(BigInt(exchange.pass.near) * BigInt(exchange.fail.token) > BigInt(exchange.fail.near) * BigInt(exchange.pass.token), "pass prices the token higher");
@@ -177,6 +191,7 @@ const runs = {
     assert.equal((await proposal(id)).state, "Succeeded");
     await run(3, `execute ${id}`, { expect: /executed/i });
     console.log("  ✔ the pass market's average price beat the fail market's, so it passed and executed");
+    assert.ok(buttonCmds(await run(2, `proposal ${id}`)).includes(`redeem ${id}`), "a Redeem button");
     await run(2, `redeem ${id}`, { expect: /Redeemed/ });
     await run(1, `reclaimliquidity ${id}`, { expect: /Returned/ });
     console.log("  ✔ bob redeemed his winning units, and the pass market's liquidity went back to alice");

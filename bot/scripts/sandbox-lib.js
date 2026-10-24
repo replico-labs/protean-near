@@ -9,7 +9,7 @@ if (process.env.NEAR_NETWORK !== "sandbox") throw new Error("Run with --env-file
 
 const { KeyPair, nearToYocto, yoctoToNear } = await import("near-api-js");
 const { RPC_URL } = await import("../src/config.js");
-const { runCommand } = await import("../src/platforms/commands.js");
+const { runCommand, runButton } = await import("../src/platforms/commands.js");
 const { services } = await import("../src/platforms/services.js");
 const { operatorAccount, signingAccount, availableBalance } = await import("../src/near/client.js");
 const { ensureGas, gasHoldNear, userAccountId } = await import("../src/near/wallets.js");
@@ -68,6 +68,17 @@ export async function run(user, line, { expect } = {}) {
   else assert.ok(!reply.ephemeral, `/${line} was refused: ${reply.text}`);
   return reply;
 }
+
+/** User `user` presses the button running `line`, as Telegram would: an `ask` button opens its menu. */
+export async function press(user, line) {
+  const [name, ...args] = line.trim().split(/\s+/);
+  const reply = await runButton(name, { platform: "telegram", chatId: chat, userId: tgId(user), args, cmd: (n) => `/${n}` });
+  console.log(`  ${NAMES[user]}: [${line}]\n    → ${reply.text.split("\n").join("\n      ")}`);
+  return reply;
+}
+
+/** The commands of a reply's buttons. */
+export const buttonCmds = (reply) => (reply.buttons ?? []).flat().filter((b) => b.cmd).map((b) => b.cmd);
 
 export async function rpc(method, params) {
   const res = await fetch(RPC_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });

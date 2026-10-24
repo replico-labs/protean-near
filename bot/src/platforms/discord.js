@@ -1,7 +1,8 @@
 // First: blanks tokens and keys in everything logged after this.
 import "../logRedaction.js";
 import { Client, Events, GatewayIntentBits, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
-import { COMMANDS, ADMIN_COMMANDS, runCommand } from "./commands.js";
+import { COMMANDS, ADMIN_COMMANDS, runCommand, runButton } from "./commands.js";
+import { menuText } from "./buttonMenus.js";
 import { encodeButton, decodeButton, BUTTON_COMMANDS } from "../buttons.js";
 import { startNotifier } from "./notifier.js";
 
@@ -118,6 +119,13 @@ async function handleButton(interaction) {
     await interaction.update({ content: first, components: discordComponents(result.buttons) });
     return;
   }
+  // A second step (how much? are you sure?), shown only to the presser.
+  if (name === "ask") {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const menu = await runButton(name, commandContext(interaction, args));
+    await interaction.editReply({ content: toDiscordMarkdown(menuText(menu.text)), components: discordComponents(menu.buttons) });
+    return;
+  }
   await interaction.deferReply();
   const result = await runCommand(name, commandContext(interaction, args));
   const [first, ...more] = splitForDiscord(toDiscordMarkdown(`<@${interaction.user.id}> → \`${cmd(name)} ${args.join(" ")}\`\n\n${result.text}`));
@@ -128,6 +136,13 @@ async function handleButton(interaction) {
   }
   await interaction.editReply({ content: first, components: discordComponents(result.buttons) });
   for (const content of more) await interaction.followUp({ content });
+  await followUpPrivately(interaction, result);
+}
+
+/** A reply's private part (a proposal's edit link), shown only to whoever ran the command. */
+async function followUpPrivately(interaction, result) {
+  if (!result.private) return;
+  for (const content of splitForDiscord(toDiscordMarkdown(result.private.text))) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
 }
 
 /** Handles one slash-command or button interaction. */
@@ -153,6 +168,7 @@ export async function handleInteraction(interaction) {
   }
   const isPrivate = Boolean(result.ephemeral || command.ephemeralByDefault);
   for (const content of more) await interaction.followUp({ content, ...(isPrivate ? privateFlags : {}) });
+  await followUpPrivately(interaction, result);
 }
 
 export async function startDiscordBot({ token, applicationId, guildId } = {}) {

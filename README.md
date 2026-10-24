@@ -91,6 +91,18 @@ Protean included.
 
 A defeated, cancelled or expired proposal never reaches the treasury.
 
+**Proposal pages.** Each proposal also gets a page on the Protean website,
+`/p/near-testnet/<orbit>/<id>` (a board's at its core), reached from the
+📄 Details button. The proposer gets a private link (a Telegram DM, a
+hidden Discord reply) to add a title, summary, write-up and links, shown
+next to live data read from the orbit.
+- The first save sets an edit password. Later edits need the link and
+  the password, and every version stays visible on the page.
+- Details can change for 6 hours after proposing, then only while nobody
+  has voted, up to 72 hours.
+- The bot serves the website this data over
+  `/api/proposals/<network>/<account>/<id>` (`bot/src/proposalPages.js`).
+
 ### Switching models
 
 `/switchmodel quadratic` creates a new orbit running the new model and
@@ -232,7 +244,7 @@ Expect 70 tests to pass. Among other things, they show that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 62`. The commands run against a fake chain.
+Expect `pass 74`. The commands run against a fake chain.
 
 ### 3. A local NEAR node
 
@@ -318,9 +330,37 @@ A chat without a DAO sees just `/help`, `/createdao`, `/link`, `/wallet` and
 addresses to the explorer, next to the address itself, which can be tapped
 to copy.
 
-The bot also posts on its own when voting on a proposal ends, when a
-passed proposal can be executed (with an Execute button), when its
-execution window is about to close, and when it expires.
+**Buttons.** Proposals, `/proposal <id>` and the bot's notices end with
+the buttons for where the proposal is now. A button runs the same command
+as typing it, as whoever pressed it, with the same checks.
+
+| Model | Buttons |
+| --- | --- |
+| Token-weighted, quadratic, liquid, delegate, sortition | For / Against / Abstain while voting |
+| Optimistic | Challenge in the challenge window; For / Against / Abstain once challenged |
+| Conviction | Support / Queue |
+| Board | Approve / Reject |
+| Sowellian | For / Against / Abstain (approval) → Back YES / Back NO → It worked / It didn't (or Resolve from the oracle) → Dispute, or Lock it in → It worked / It didn't (adjudication), Close the vote → Claim winnings |
+| Decision markets | Buy pass / Buy fail / Sell pass / Sell fail and Split NEAR / Split tokens while trading → Redeem |
+
+Every model also gets Execute once a proposal can execute, 🔄 Status, and
+📄 Details when proposal pages are on.
+- **"How much?"** A button that spends (a position, a split, a trade)
+  first offers 10% / 25% / 50% / All of what the presser holds for it.
+- **"Are you sure?"** Proposing or disputing a Sowellian outcome posts a
+  bond, so its button explains the bond and asks first.
+- These second steps show only to the presser on Discord. On Telegram
+  they're posted in the group, addressed to them.
+- Only the commands in `BUTTON_COMMANDS` (`bot/src/buttons.js`) can come
+  from a button.
+
+The bot also posts on its own, each notice with those buttons:
+- a proposal made somewhere else (another linked chat, or straight on chain)
+- voting ending, a passed proposal becoming executable, its last hour to
+  execute, and its expiry
+- a challenge (optimistic), positions opening (Sowellian), markets opening
+  (decision markets)
+- each step of a Sowellian outcome: measured, proposed, disputed, resolved
 
 Each command is defined once, in `bot/src/platforms/commands/`, and both
 Telegram and Discord run it.

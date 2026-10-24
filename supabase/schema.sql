@@ -35,15 +35,17 @@ create table if not exists chat_links (
 );
 alter table chat_links enable row level security;
 
--- Proposal pages: details a proposer writes for each orbit proposal.
+-- Proposal pages (bot/src/proposalPages.js): details a proposer writes for
+-- each proposal, shown on the website next to live data. Only the scrypt
+-- hash of the edit password is kept.
 -- An orbit proposal gets a Sputnik proposal id only once it passes.
 create table if not exists proposal_details (
   network text not null,                 -- e.g. "near-testnet"
-  orbit_id text not null,
+  orbit_id text not null,                -- the orbit; for a board, the core DAO
   proposal_id text not null,             -- the orbit's own proposal id
   dao_id text not null,
   sputnik_proposal_id bigint,            -- set once the orbit sends it to the core
-  orbit_type text not null,
+  orbit_type text not null,              -- the model, e.g. "tokenWeighted", "board"
   chat_platform text,
   title text,
   summary text,

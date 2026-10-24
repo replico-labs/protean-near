@@ -2,10 +2,11 @@
 import "../logRedaction.js";
 import { Bot, GrammyError } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
-import { COMMANDS, ADMIN_COMMANDS, runCommand, commandsFor } from "./commands.js";
+import { COMMANDS, ADMIN_COMMANDS, runCommand, runButton, commandsFor } from "./commands.js";
 import { services } from "./services.js";
 import { decodeButton, BUTTON_COMMANDS, telegramKeyboard } from "../buttons.js";
 import { startNotifier } from "./notifier.js";
+import { editLinkFromStart } from "../proposalPages.js";
 
 /**
  * Telegram front-end for the shared commands (commands.js).
@@ -92,6 +93,11 @@ async function isChatAdmin(ctx) {
  * description with a stray * or _), the same text goes as plain text.
  */
 async function send(ctx, result) {
+  await sendText(ctx, result);
+  if (result.private) await sendPrivately(ctx, result.private);
+}
+
+async function sendText(ctx, result) {
   const chunks = splitForTelegram(result.text);
   for (const [i, chunk] of chunks.entries()) {
     const last = i === chunks.length - 1;
@@ -102,6 +108,21 @@ async function send(ctx, result) {
       if (!(err instanceof GrammyError && /can't parse entities/i.test(err.description))) throw err;
       await ctx.reply(chunk, extra);
     }
+  }
+}
+
+/**
+ * A reply only the user may see (a proposal's edit link), in a DM. A bot
+ * can't message someone who never started it, so then the group gets a
+ * link that opens the DM and sends it there (/start <start>).
+ */
+async function sendPrivately(ctx, { text, start }) {
+  try {
+    await postToChat(ctx.api, ctx.from.id, text);
+  } catch (err) {
+    if (!(err instanceof GrammyError)) throw err;
+    const who = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+    await sendText(ctx, { text: `${who}, I can't message you first: [open a chat with me](https://t.me/${ctx.me.username}?start=${start}) and I'll send your private link there.` });
   }
 }
 
@@ -138,6 +159,11 @@ export function createTelegramBot(token) {
     const parsed = parseCommandText(ctx.message.text);
     if (!parsed) return;
     const [name, args] = parsed;
+    // A proposer opening the DM from the group's link gets their edit link.
+    if (name === "start" && ctx.chat.type === "private" && args[0]?.startsWith("pe_")) {
+      const text = await editLinkFromStart(args[0], commandContext(ctx, []));
+      if (text) return sendText(ctx, { text });
+    }
     const command = name === "start" ? "help" : name;
     if (!COMMANDS[command]) return; // another bot's command, in a group
     const commandCtx = commandContext(ctx, args);
@@ -151,9 +177,16 @@ export function createTelegramBot(token) {
     const decoded = decodeButton(ctx.callbackQuery.data);
     if (!decoded || !BUTTON_COMMANDS.has(decoded[0])) return ctx.answerCallbackQuery();
     const [name, args] = decoded;
+    const who = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+    // A second step (how much? are you sure?): a group bot can't show one member a
+    // message, so it's posted addressed to the presser.
+    if (name === "ask") {
+      await ctx.answerCallbackQuery();
+      const menu = await runButton(name, commandContext(ctx, args));
+      return send(ctx, { ...menu, text: `${who}, ${menu.text}` });
+    }
     await ctx.answerCallbackQuery({ text: `Running ${cmd(name)} ${args.join(" ")}...` });
     const result = await runAndSyncMenu(ctx, name, commandContext(ctx, args));
-    const who = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
     await send(ctx, { ...result, text: `${who} → \`${cmd(name)} ${args.join(" ")}\`\n\n${result.text}` });
   });
 

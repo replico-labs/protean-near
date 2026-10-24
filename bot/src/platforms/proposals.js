@@ -1,6 +1,7 @@
 import { describeKind, kindTokens } from "../near/kinds.js";
 import { readable } from "../near/evm.js";
 import { proposalButtons } from "../buttons.js";
+import { proposalPageUrl } from "../proposalPages.js";
 import { services } from "./services.js";
 import { formatNear, formatTime, nowNs } from "./helpers.js";
 
@@ -23,7 +24,7 @@ export async function loadProposal(link, id, token) {
     const counts = p.vote_counts?.governance ?? ["0", "0", "0"];
     const lines = [`Status: *${p.status}*`, `Approve ${counts[0]} · Reject ${counts[1]}`];
     await services.tokens.load(kindTokens(p.kind));
-    return { id, description: p.description, kind: p.kind, state: p.status, lines, buttons: proposalButtons("board", id, p.status) };
+    return { id, description: p.description, kind: p.kind, state: p.status, lines, buttons: proposalButtons("board", id, p.status, proposalPageUrl(link, id)) };
   }
   const p = await services.orbit.getProposal(link.orbitId, id);
   if (!p) return null;
@@ -39,8 +40,9 @@ export async function loadProposal(link, id, token) {
     lines.push(`For ${unit(p.for_votes)} · Against ${unit(p.against_votes)} · Abstain ${unit(p.abstain_votes)} · ${p.voters} voter${p.voters === 1 ? "" : "s"}`);
   }
   if (p.challenger) lines.push(`Challenged by \`${p.challenger}\``);
-  if (link.model === "sowellian") lines.push(...(await betLines(link, id, fmt)));
-  if (link.model === "decisionMarkets") lines.push(...(await exchangeLines(link, id, fmt)));
+  const market = await marketOf(link, id);
+  if (market.bet) lines.push(...betLines(market.bet, fmt));
+  if (market.exchange) lines.push(...exchangeLines(market.exchange, fmt));
   if (p.state === "Pending" && BigInt(p.start) > nowNs()) lines.push(`Voting opens ${formatTime(p.start)}`);
   if (p.state === "Active" && link.model !== "conviction") lines.push(`Voting ends ${formatTime(p.end)}`);
   if (p.state === "ChallengeWindow") lines.push(`Passes unless challenged by ${formatTime(p.end)}`);
@@ -49,13 +51,27 @@ export async function loadProposal(link, id, token) {
     const coreProposal = await services.core.getCoreProposal(link.daoId, p.core_proposal_id).catch(() => null);
     lines.push(`On the DAO: proposal ${p.core_proposal_id}${coreProposal ? `, ${coreProposal.status}` : ""}`);
   }
-  return { id, description: p.description, kind: p.kind, state: p.state, lines, buttons: proposalButtons(link.model, id, p.state) };
+  return { id, description: p.description, kind: p.kind, state: p.state, lines, buttons: proposalButtons(link.model, id, p.state, proposalPageUrl(link, id), market) };
+}
+
+/**
+ * What a Sowellian or decision-markets proposal's buttons go by: { bet } or
+ * { exchange }, with `now`. Other models: { now }.
+ */
+export async function marketOf(link, id) {
+  if (link.model !== "sowellian" && link.model !== "decisionMarkets") return { now: nowNs() };
+  // Their phases end at deadlines the contract checks against the chain's clock.
+  const now = await services.clock.now().catch(() => nowNs());
+  if (link.model === "sowellian") return { bet: await services.orbit.getBet(link.orbitId, id), now };
+  if (link.model === "decisionMarkets") {
+    const found = await services.orbit.getExchange(link.orbitId, id);
+    return found ? { exchange: { ...found[0], twaps: [found[1], found[2]] }, now } : { now };
+  }
+  return { now };
 }
 
 /** Sowellian: the market and the resolution so far. */
-async function betLines(link, id, fmt) {
-  const bet = await services.orbit.getBet(link.orbitId, id);
-  if (!bet) return [];
+function betLines(bet, fmt) {
   const lines = [`Market: YES ${fmt(bet.yes_pool)} · NO ${fmt(bet.no_pool)}`];
   if (bet.measurement_deadline) lines.push(`Measuring until ${formatTime(bet.measurement_deadline)}`);
   if (bet.resolver) lines.push(`Resolution proposed: *${bet.proposed_outcome}* by \`${bet.resolver}\``);
@@ -65,10 +81,8 @@ async function betLines(link, id, fmt) {
 }
 
 /** Decision markets: seeds, prices and the TWAPs. */
-async function exchangeLines(link, id, fmt) {
-  const found = await services.orbit.getExchange(link.orbitId, id);
-  if (!found) return [];
-  const [e, passTwap, failTwap] = found;
+function exchangeLines(e, fmt) {
+  const [passTwap, failTwap] = e.twaps;
   if (!e.opened_at) return [`Waiting for seeds: ${BigInt(e.token_seed) > 0n ? "token ✅" : "token ⏳"} ${BigInt(e.near_seed) > 0n ? "NEAR ✅" : "NEAR ⏳"}`];
   const price = (pool) => (BigInt(pool.token) > 0n ? formatNear((BigInt(pool.near) * 10n ** 18n) / BigInt(pool.token)) : "0");
   return [

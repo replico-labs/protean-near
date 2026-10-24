@@ -4,6 +4,8 @@ import { measurementPeriod } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, tokenInfo, explain } from "../helpers.js";
 import { loadProposal, describeProposal } from "../proposals.js";
+import { proposalCreated } from "../../proposalPages.js";
+import { markAnnounced } from "../notifier.js";
 
 /** Makes a proposal on the chat's orbit, or for a board on the core, and shows it with its buttons. */
 export async function makeProposal(ctx, dao, description, kind) {
@@ -24,7 +26,14 @@ export async function makeProposal(ctx, dao, description, kind) {
   const p = await loadProposal(dao, id, token);
   let note = p.state === "Cancelled" ? `\n\n⚠️ Cancelled: you need more ${token.symbol} staked to propose here.` : "";
   if (dao.model === "decisionMarkets") note = `\n\nSeed its markets to open trading: \`${ctx.cmd("seed")} ${id} <tokens> <NEAR>\`.`;
-  return reply(`📝 New proposal\n\n${describeProposal(p, token)}${note}`, { buttons: p.buttons });
+  return announce(ctx, dao, id, p.state, `📝 New proposal\n\n${describeProposal(p, token)}${note}`, p.buttons);
+}
+
+/** The new proposal's reply; with proposal pages, the proposer also gets a private link to add its details. */
+async function announce(ctx, dao, id, state, text, buttons) {
+  if (dao.model !== "board") markAnnounced(ctx.platform, ctx.chatId, id, state);
+  const page = await proposalCreated(ctx, dao, id);
+  return reply(page ? `${text}\n\n📄 The proposer can add a title, summary and links on its page: I've sent them a private link.` : text, { buttons, private: page });
 }
 
 /** A Sowellian proposal: success is judged by a human resolver after measuring; the bot posts the proposal bond. */
@@ -36,7 +45,7 @@ async function proposeSowellian(ctx, dao, account, token, description, kind) {
   const id = await services.orbit.proposeWithCriteria(account, dao.orbitId, description, kind, measurementPeriod());
   if (bond > 0n) await services.orbit.sendToOrbit(account, token.id, dao.orbitId, bond, { proposal_bond: id });
   const p = await loadProposal(dao, id, token);
-  return reply(`📝 New proposal, with a ${token.format(bond)} bond\n\n${describeProposal(p, token)}\n\nIf approved, bet on its success with \`${ctx.cmd("position")} ${id} yes|no <amount>\`.`, { buttons: p.buttons });
+  return announce(ctx, dao, id, p.state, `📝 New proposal, with a ${token.format(bond)} bond\n\n${describeProposal(p, token)}\n\nIf approved, bet on its success with \`${ctx.cmd("position")} ${id} yes|no <amount>\`.`, p.buttons);
 }
 
 const pay = {

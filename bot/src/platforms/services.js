@@ -11,7 +11,7 @@ import * as evm from "../near/evm.js";
 import * as hyperliquid from "../near/hyperliquid.js";
 import { VENUES } from "../near/venues.js";
 import { getOrCreateUserAccount, ensureGas, findUserAccountId, gasHoldNear } from "../near/wallets.js";
-import { availableBalance } from "../near/client.js";
+import { availableBalance, chainNowNs } from "../near/client.js";
 import { getChatDao, setChatDao, removeChatDao, chatsOn } from "../db.js";
 import { isWalletStoreConfigured, getOrCreateAgentKey, findAgentAddress } from "../walletStore.js";
 
@@ -36,4 +36,5 @@ export const services = {
   db: { getChatDao, setChatDao, removeChatDao, chatsOn },
   hlAgents: { getOrCreateAgentKey, findAgentAddress },
   isWalletStoreConfigured,
+  clock: { now: chainNowNs },
 };

@@ -10,12 +10,17 @@
 // Voting periods are a minute; the script moves the sandbox's clock forward
 // instead of waiting.
 import assert from "node:assert/strict";
-import { services, RUN, account, link, chatId, run, rpc, advance, step, near, propose, pass } from "./sandbox-lib.js";
+import { services, RUN, account, link, chatId, run, rpc, advance, step, near, propose, pass, proposalId } from "./sandbox-lib.js";
 
 const { nearToYocto, yoctoToNear } = await import("near-api-js");
 const { OPERATOR_ACCOUNT_ID } = await import("../src/config.js");
 const { operatorAccount, signingAccount, accountExists, availableBalance, view, call } = await import("../src/near/client.js");
 const deploy = await import("../src/near/deploy.js");
+// Proposal pages, with the details kept in memory instead of Supabase.
+process.env.PROPOSAL_SITE_URL ??= "https://protean.today";
+process.env.PROPOSAL_LINK_SECRET ??= "sandbox-proposal-link-secret";
+const pages = await import("../src/proposalPages.js");
+pages.usePageStore();
 const { modelConfig, MODULE_CONTRACT } = await import("../src/near/models.js");
 
 const E18 = 10n ** 18n;
@@ -26,6 +31,7 @@ const name = `ark${RUN}`;
 step(`Alice creates a token-weighted DAO "${name}" from the chat`);
 await run(1, `createdao ${name} ARK 1000000`, { expect: /is live/ });
 const { daoId, tokenId } = link();
+const firstOrbit = link().orbitId;
 const [alice, bob, carol] = [account(1), account(2), account(3)];
 assert.deepEqual((await view(daoId, "get_policy")).roles.find((r) => r.name === "governance").kind.Group, [link().orbitId]);
 console.log(`  The core ${daoId} has one member: the orbit ${link().orbitId}`);
@@ -90,6 +96,28 @@ assert.equal(BigInt(p.for_votes), isqrt(300000n * E18) + isqrt(100000n * E18));
 console.log(`  ✔ against ${p.against_votes} (√ of alice's 500k) vs for ${p.for_votes} (√300k + √100k): bob and carol outvote alice`);
 await advance(2.5);
 await run(1, "execute 0", { expect: /executed/i });
+
+step("Proposal pages: the proposer adds details from a private link; the page shows them next to the chain's data");
+const made = await run(1, "signal Adopt the docs plan", { expect: /New proposal/ });
+const docsId = proposalId(made);
+const pageUrl = `https://protean.today/p/near-sandbox/${link().orbitId}/${docsId}`;
+assert.ok(made.buttons.flat().some((b) => b.url === pageUrl), "a Details button to the page");
+const editToken = new URL(/\((https:[^)]+\?edit=[^)]+)\)/.exec(made.private.text)[1]).searchParams.get("edit");
+const saved = await pages.saveProposalPage("near-sandbox", link().orbitId, String(docsId), { token: editToken, title: "Docs plan", summary: "Write the user guide", password: "sandbox-password" });
+assert.equal(saved.status, 200, saved.body.error);
+await run(2, `vote ${docsId} for`);
+const docsPage = (await pages.getProposalPage("near-sandbox", link().orbitId, String(docsId))).body;
+assert.equal(docsPage.details.title, "Docs plan");
+assert.equal(docsPage.live.proposer, alice);
+assert.equal(docsPage.live.state, "Active");
+assert.equal(docsPage.live.facts.find((f) => f.label === "Voters").value, "1");
+assert.equal(docsPage.live.started, true);
+assert.equal((await run(2, `proposal ${docsId}`)).private, null, "only the proposer gets the link again");
+assert.match((await run(1, `proposal ${docsId}`)).private.text, /Your edit page/);
+const oldPage = (await pages.getProposalPage("near-sandbox", firstOrbit, "0")).body;
+assert.deepEqual([oldPage.live.model, oldPage.live.state], ["tokenWeighted", "Executed"]);
+console.log(`  ✔ ${pageUrl}: details v1 by alice, 1 voter so far; the token-weighted orbit's old proposal #0 still has its page`);
+await advance(2.5); // its vote ends here, not during the notifications below
 
 if (process.env.RHEA_EXCHANGE_ID) {
   // Venues from scripts/sandbox-venues.js: Rhea's exchange with a NEAR/USDC pool, and LiNEAR.
@@ -392,5 +420,9 @@ await run(2, "vote 0 for", { expect: /executed|approved|passed/i });
 const proposal = await view(link().daoId, "get_proposal", { id: 0 });
 assert.equal(proposal.status, "Approved");
 console.log("  ✔ two of three board members approved and Sputnik paid out");
+const boardPage = (await pages.getProposalPage("near-sandbox", link().daoId, "0")).body;
+assert.deepEqual(boardPage.live.facts.map((f) => [f.label, f.value]), [["Approve", "2"], ["Reject", "0"]]);
+assert.equal(boardPage.live.proposer, alice);
+console.log(`  ✔ the board's page lives at the core: /p/near-sandbox/${link().daoId}/0`);
 
 console.log("\nAll checks passed.");

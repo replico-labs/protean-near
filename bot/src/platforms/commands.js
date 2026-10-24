@@ -3,6 +3,7 @@ import { MODELS } from "../near/models.js";
 import { ChainError } from "../near/client.js";
 import { services } from "./services.js";
 import { UserError, reply } from "./helpers.js";
+import { buttonMenu } from "./buttonMenus.js";
 import { SETUP_COMMANDS } from "./commands/setup.js";
 import { WALLET_COMMANDS } from "./commands/wallet.js";
 import { DAO_COMMANDS } from "./commands/dao.js";
@@ -28,7 +29,9 @@ import { HYPERLIQUID_COMMANDS } from "./commands/hyperliquid.js";
  *   cmd(name) how this platform spells a command, for usage hints
  *
  * Replies use Telegram-style markdown (*bold*, `code`): { text, ephemeral?,
- * buttons? }. `options` drives Discord's slash commands; `section`, `usage`,
+ * buttons?, private? }. `private` ({ text, start }) goes only to whoever
+ * ran the command: a DM on Telegram (or, if the bot can't message them
+ * first, a link that opens one: /start <start>), a hidden reply on Discord. `options` drives Discord's slash commands; `section`, `usage`,
  * `models` (the models a command applies to) and `needsDao` drive help and
  * Telegram's command menu.
  */
@@ -110,5 +113,19 @@ export async function runCommand(name, ctx) {
     if (err instanceof ChainError && CHAIN_ERRORS[err.code]) return reply(CHAIN_ERRORS[err.code], { ephemeral: true });
     console.error(`[${ctx.platform}] ${name} failed:`, err);
     return reply(`Couldn't complete \`${name}\`: ${err.message || "unknown error"}`, { ephemeral: true });
+  }
+}
+
+/**
+ * A pressed button: its command, or for `ask` a second-step menu
+ * (buttonMenus.js) meant only for the presser ({ menu: true, ephemeral }).
+ */
+export async function runButton(name, ctx) {
+  if (name !== "ask") return runCommand(name, ctx);
+  try {
+    return reply("", { ...(await buttonMenu(ctx, ctx.args)), menu: true, ephemeral: true });
+  } catch (err) {
+    if (!(err instanceof UserError)) console.error("[buttons] ask failed:", err);
+    return reply(err instanceof UserError ? err.message : "Couldn't open that menu. Try again in a moment.", { ephemeral: true });
   }
 }
