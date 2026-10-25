@@ -100,7 +100,7 @@ beforeEach(() => {
     venues: { wrapNear: "wrap.testnet" },
     hyperliquid: {
       ...realHyperliquid,
-      account: async () => ({ accountValue: "120", withdrawable: "50", positions: [{ coin: "ETH", size: "0.1", value: "350" }] }),
+      account: async () => ({ accountValue: "120", withdrawable: "50", positions: [{ coin: "ETH", size: "0.1", value: "350", entry: "3300", pnl: "20", roe: "0.3", leverage: 5, liquidation: "2900" }] }),
       submit: async (action, sig) => {
         if (sig.r !== "0x0a") throw new Error("not the DAO's");
         calls.push(["hlSubmit", action]);
@@ -782,7 +782,7 @@ test("hlrevoke replaces the agent with an address nobody holds; hlsend checks wh
   calls = [];
   await runCommand("hlsend", ctx(["12.50", "0x2222222222222222222222222222222222222222"]));
   assert.equal(realEvm.txsIn(calls.find((c) => c[0] === "propose")[2]).actions[0].amount, "12.5");
-  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Perps \(trading\): \$120 · Withdrawable: 50 USDC[\s\S]*ETH: 0\.1/);
+  assert.match((await runCommand("hyperliquid", ctx([]))).text, /Perps \(trading\): \$120 · Withdrawable: 50 USDC\n• ETH long 0\.1 @ \$3300 · now \$350 · PnL \+\$20 \(\+30\.0%\) · 5× · liquidates at \$2900\nUnrealized PnL: \+\$20 · \[Hyperliquid's page\]\(https:\/\/app\.hyperliquid-testnet\.xyz\/explorer\/address\/0x/);
   // An agent from before only the bot could be one is flagged, with how to remove it.
   services.hlAgents = { findAgentAddress: async () => "0xb0b0000000000000000000000000000000000000" };
   services.hyperliquid = { ...services.hyperliquid, agents: async () => [{ name: "desk", address: "0x1111111111111111111111111111111111111111" }, { name: "protean", address: "0xb0b0000000000000000000000000000000000000" }] };

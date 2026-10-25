@@ -125,12 +125,24 @@ export async function submit(action, signature, from) {
  * withdrawable, positions: [{ coin, size, value }] }), and the USDC in its
  * separate spot balance (`spotUsdc`).
  */
+/** Hyperliquid's own page for `address`: balances, positions, trades. */
+export const explorerUrl = (address) => `${NETWORK_ID === "mainnet" ? "https://app.hyperliquid.xyz" : "https://app.hyperliquid-testnet.xyz"}/explorer/address/${address}`;
+
 export async function account(address) {
   const [state, spot] = await Promise.all([post("/info", { type: "clearinghouseState", user: address }), post("/info", { type: "spotClearinghouseState", user: address }).catch(() => null)]);
   return {
     accountValue: state.marginSummary?.accountValue ?? "0",
     withdrawable: state.withdrawable ?? "0",
-    positions: (state.assetPositions ?? []).map((p) => ({ coin: p.position.coin, size: p.position.szi, value: p.position.positionValue })),
+    positions: (state.assetPositions ?? []).map(({ position: p }) => ({
+      coin: p.coin,
+      size: p.szi,
+      value: p.positionValue,
+      entry: p.entryPx ?? null,
+      pnl: p.unrealizedPnl ?? null,
+      roe: p.returnOnEquity ?? null,
+      leverage: p.leverage?.value ?? null,
+      liquidation: p.liquidationPx ?? null,
+    })),
     spotUsdc: spot?.balances?.find((b) => b.coin === "USDC")?.total ?? "0",
   };
 }

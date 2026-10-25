@@ -54,7 +54,8 @@ const hyperliquid = {
     const address = await daoAddress(dao);
     const account = await services.hyperliquid.account(address).catch(() => null);
     if (!account) return reply(`Couldn't read Hyperliquid for \`${address}\` right now.`);
-    const positions = account.positions.length ? account.positions.map((p) => `• ${p.coin}: ${p.size} (≈ $${p.value})`).join("\n") : "No open positions.";
+    const positions = account.positions.length ? account.positions.map(positionLine).join("\n") : "No open positions.";
+    const totalPnl = account.positions.reduce((sum, p) => sum + Number(p.pnl ?? 0), 0);
     const rules = await currentRules(dao).catch(() => null);
     const agent = await services.hlAgents.findAgentAddress(dao.daoId).catch(() => null);
     // Agents other than the bot's (approved before only the bot could be one) trade outside the DAO's limits.
@@ -65,6 +66,7 @@ const hyperliquid = {
         `*Hyperliquid account* \`${address}\``,
         `Perps (trading): $${account.accountValue} · Withdrawable: ${account.withdrawable} USDC`,
         positions,
+        account.positions.length ? `Unrealized PnL: ${signedUsd(totalPnl)} · [Hyperliquid's page](${services.hyperliquid.explorerUrl(address)})` : null,
         Number(account.spotUsdc) > 0 ? `Spot: ${account.spotUsdc} USDC, not usable for trading until moved: \`${ctx.cmd("hlmove")} all perps\`` : null,
         ...(rules ? ["", "*Trading from the chat*", ...describeRules(rules, ctx.cmd)] : []),
         agent ? `The bot's agent: \`${agent}\` (approved with \`${ctx.cmd("hlagent")}\`)` : `Let traders trade from the chat: \`${ctx.cmd("hlagent")}\``,
@@ -83,6 +85,18 @@ const hyperliquid = {
  * outside the bot, past the traders and limits the DAO voted for, and
  * could empty the account through bad trades.
  */
+const signedUsd = (n) => `${n < 0 ? "−" : "+"}${usd(Math.abs(n))}`;
+
+/** "• SOL long 0.07 @ $142.10 · now $10.05 · PnL +$0.12 (+6%) · 5× · liquidates at $115.40" */
+export function positionLine(p) {
+  const size = Number(p.size);
+  const parts = [`• ${p.coin} ${size < 0 ? "short" : "long"} ${Math.abs(size)}${p.entry ? ` @ $${p.entry}` : ""}`, `now ${usd(Number(p.value))}`];
+  if (p.pnl !== null && p.pnl !== undefined) parts.push(`PnL ${signedUsd(Number(p.pnl))}${p.roe !== null && p.roe !== undefined ? ` (${Number(p.roe) < 0 ? "−" : "+"}${Math.abs(Number(p.roe) * 100).toFixed(1)}%)` : ""}`);
+  if (p.leverage) parts.push(`${p.leverage}×`);
+  if (p.liquidation) parts.push(`liquidates at $${p.liquidation}`);
+  return parts.join(" · ");
+}
+
 const hlagent = {
   section: "Treasury",
   needsDao: true,
