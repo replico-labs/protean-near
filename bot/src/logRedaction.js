@@ -4,7 +4,7 @@ import util from "node:util";
 /**
  * Keeps secrets out of the logs. Errors quote whatever request failed, and
  * those requests carry credentials: a Telegram API URL holds the bot token,
- * a provider RPC URL its API key (QuickNode's sits in the path). Railway
+ * a provider RPC URL its API key (QuickNode's sits in the path). The host
  * keeps every line, so each console method is wrapped here to blank them
  * before they're written.
  *

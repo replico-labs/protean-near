@@ -1,0 +1,51 @@
+# Render Blueprint for the Protean bot (Telegram and Discord). In Render:
+# New → Blueprint → this repository. Values marked `sync: false` are asked
+# for when the Blueprint is created; they're never stored in this file.
+# See docs/hosting.md.
+services:
+  - type: web
+    name: protean-near-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # A paid instance: a free web service sleeps after 15 minutes without
+    # web traffic, and the bot would stop answering in the chats.
+    plan: starter
+    region: frankfurt
+    # One copy per bot token: two would make Telegram answer 409 Conflict.
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NEAR_NETWORK
+        value: testnet
+      # The host's disk is wiped on every deploy: chat links live in Supabase.
+      - key: CHAT_LINKS_STORE
+        value: supabase
+      - key: SPUTNIK_FACTORY_ID
+        value: sputnik.protean.testnet
+      - key: DAO_CREATE_DEPOSIT
+        value: "0.1"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: NEAR_OPERATOR_ACCOUNT_ID
+        sync: false
+      - key: NEAR_OPERATOR_PRIVATE_KEY
+        sync: false
+      - key: KMS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Proposal pages (optional): the website's URL and the edit-link secret.
+      - key: PROPOSAL_SITE_URL
+        sync: false
+      - key: PROPOSAL_LINK_SECRET
+        generateValue: true

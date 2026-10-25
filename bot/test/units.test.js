@@ -275,3 +275,26 @@ test("Hyperliquid prices and sizes are written as it accepts them", async () => 
   const order = hl.marketOrder({ asset: 4, szDecimals: 4 }, true, 0.15, 3300);
   assert.deepEqual(order.orders[0], { a: 4, b: true, p: "3333", s: "0.15", r: false, t: { limit: { tif: "Ioc" } } });
 });
+
+test("telegram polling starts again after a 409 Conflict (two copies during a deploy)", async () => {
+  const { keepPolling } = await import("../src/platforms/telegram.js");
+  const starts = [];
+  const fakeRun = () => {
+    const n = starts.length;
+    const handle = {
+      running: true,
+      // The first run is cut off by the other copy; the second keeps polling.
+      task: () => (n === 0 ? Promise.reject(Object.assign(new Error("Conflict"), { error_code: 409 })) : new Promise(() => {})),
+      isRunning: () => handle.running,
+      stop: async () => (handle.running = false),
+    };
+    starts.push(handle);
+    return handle;
+  };
+  const polling = keepPolling({}, { runner: fakeRun, retryMs: 10 });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(starts.length, 2, "polled again after the 409");
+  assert.equal(polling.isRunning(), true);
+  await polling.stop();
+  assert.equal(polling.isRunning(), false);
+});

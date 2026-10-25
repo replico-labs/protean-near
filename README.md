@@ -216,7 +216,7 @@ bot/                       Telegram and Discord bot (Node)
   src/near/                NEAR: accounts, orbit, staking, Sputnik, integrations
   scripts/                 publish contracts, deploy the factory, local node runs
 docs/                      SPEC.md (design), sandbox.md (local node), hosting.md, testnet-check.md
-Dockerfile, railway.json   hosting the bot
+Dockerfile, render.yaml    hosting the bot
 supabase/schema.sql        the bot's database
 ```
 
@@ -244,7 +244,7 @@ Expect 70 tests to pass. Among other things, they show that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 74`. The commands run against a fake chain.
+Expect `pass 75`. The commands run against a fake chain.
 
 ### 3. A local NEAR node
 
@@ -285,7 +285,7 @@ npm start                                # Telegram, and Discord if its token is
 ```
 
 To keep the bot running without your computer, host it: the repository
-includes a `Dockerfile` and a Railway config. See [docs/hosting.md](docs/hosting.md).
+includes a `Dockerfile` and a Render Blueprint (`render.yaml`). See [docs/hosting.md](docs/hosting.md).
 
 In a Telegram group, with the bot as a group admin:
 

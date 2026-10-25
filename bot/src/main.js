@@ -22,8 +22,9 @@ if (!running.length) {
   console.error("Set TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, or both.");
   process.exit(1);
 }
-// Proposal pages: the website reads and saves them through this API.
-if (proposalPagesConfigured()) running.push(["http", await startProposalApi(Number(process.env.PORT || 3000))]);
+// Proposal pages: the website reads and saves them through this API. A host
+// that sets PORT (Render) also checks GET /health there, pages or not.
+if (proposalPagesConfigured() || process.env.PORT) running.push(["http", await startProposalApi(Number(process.env.PORT || 3000))]);
 
 async function shutdown(signal) {
   console.log(`${signal}: stopping`);

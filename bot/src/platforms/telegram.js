@@ -205,13 +205,46 @@ async function postToChat(api, chatId, text, buttons) {
   }
 }
 
+/**
+ * Polls Telegram, starting again after a 409 Conflict: another copy is
+ * polling the same token, as for a few seconds during a host's deploy (the
+ * new copy starts before the old one stops). grammY's runner stops on a
+ * 409 instead of retrying. Any other polling failure ends the process, so
+ * the host restarts it. Returns the runner's isRunning() and stop().
+ */
+export function keepPolling(bot, { runner: start = run, retryMs = 5000 } = {}) {
+  let handle;
+  let stopping = false;
+  const poll = () => {
+    handle = start(bot);
+    handle.task()?.catch((err) => {
+      if (stopping) return;
+      if (err?.error_code === 409) {
+        console.warn(`[telegram] Another copy is polling this bot token (409 Conflict); trying again in ${retryMs / 1000} s.`);
+        setTimeout(() => stopping || poll(), retryMs);
+        return;
+      }
+      console.error("[telegram] Polling stopped:", err);
+      process.exit(1);
+    });
+  };
+  poll();
+  return {
+    isRunning: () => handle.isRunning(),
+    stop: () => {
+      stopping = true;
+      return handle.stop();
+    },
+  };
+}
+
 export async function startTelegramBot(token) {
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required.");
   const bot = createTelegramBot(token);
   // Default menu: what any chat can do before it has a DAO. Linked chats get their model's commands.
   await bot.api.setMyCommands(menuFor(null));
   for (const [chatId, link] of services.db.chatsOn("telegram")) await syncChatMenu(bot.api, chatId, link);
-  const runner = run(bot);
+  const runner = keepPolling(bot);
   console.log(`[telegram] Running as @${(await bot.api.getMe()).username}`);
   startNotifier("telegram", (chatId, text, buttons) => postToChat(bot.api, chatId, text, buttons), cmd);
   return runner;
