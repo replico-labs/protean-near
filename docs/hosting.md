@@ -8,6 +8,36 @@ and the proposal pages' API. Run **one** copy per bot token. A second copy
 polling the same Telegram token makes both fail with `409 Conflict`, so stop
 the copy on your computer before starting a hosted one.
 
+## Railway
+
+The repository root has a `Dockerfile` and a `railway.json` (one replica,
+restarted if it stops), so Railway builds it as it is.
+
+1. In Railway: **New Project → Deploy from GitHub repo**, and pick
+   `replico-labs/protean-near`.
+2. In the service's **Variables**, add the values from `bot/.env`:
+
+   | Variable | |
+   | --- | --- |
+   | `TELEGRAM_BOT_TOKEN` | |
+   | `NEAR_NETWORK` | `testnet` |
+   | `NEAR_OPERATOR_ACCOUNT_ID`, `NEAR_OPERATOR_PRIVATE_KEY` | |
+   | `SPUTNIK_FACTORY_ID`, `DAO_CREATE_DEPOSIT` | `sputnik.protean.testnet`, `0.1` |
+   | `KMS_KEY_ID`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | |
+   | `CHAT_LINKS_STORE` | `supabase`: the disk is wiped on every deploy, so chat links must live in Supabase |
+   | `PROPOSAL_SITE_URL`, `PROPOSAL_LINK_SECRET` | for proposal pages (below); the secret from `openssl rand -hex 32` |
+
+   Optional: `NEAR_RPC_URL`, the governance timings, `NOTIFY_SECONDS`, and
+   the Discord variables. Railway sets `PORT` itself.
+3. For proposal pages and a health check, give it a public address:
+   **Settings → Networking → Generate Domain**. `https://<domain>/health`
+   answers `ok`.
+4. Deploy. The logs should show `[telegram] Running as @<your bot>`.
+
+Each push to the repository's main branch redeploys the bot. No volume is
+needed: everything it keeps lives on NEAR or in Supabase.
+
 ## Render
 
 The repository root has a `Dockerfile` and a Render Blueprint,
@@ -41,8 +71,8 @@ instance, health check on `/health`, redeployed on every push to main.
 sleeps after 15 minutes without web traffic: Telegram messages don't wake
 it, so the bot would stop answering and stop posting notifications.
 
-On a deploy, Render starts the new copy before stopping the old one, so for
-a few seconds both poll Telegram. The new one retries until the old one has
+On a deploy, Railway and Render both start the new copy before stopping
+the old one, so for a few seconds both poll Telegram. The new one retries until the old one has
 stopped; nothing is lost.
 
 ## Any other Docker host
@@ -72,9 +102,10 @@ Each proposal gets a page on the Protean website, at
 data from this bot's API, `GET /api/proposals/...`, and the proposer's form
 `POST`s there. To turn the pages on:
 
-1. **The bot's public URL.** A Render web service has one already, shown
-   at the top of its page: `https://protean-near-bot.onrender.com` or
-   similar. `https://<that>/health` answers `ok`.
+1. **The bot's public URL.** On Railway: **Settings → Networking →
+   Generate Domain**. A Render web service has one already, at the top of
+   its page (`https://protean-near-bot.onrender.com` or similar).
+   `https://<that>/health` answers `ok`.
 2. **Set the variables:**
 
    | Variable | |

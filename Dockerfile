@@ -1,4 +1,4 @@
-# The Protean bot (Telegram and Discord), for any Docker host (Render, Fly,
+# The Protean bot (Telegram and Discord), for any Docker host (Railway, Render, Fly,
 # a VPS). Settings come from the host's environment, as in .env.example.
 FROM node:22-slim
 ENV NODE_ENV=production

@@ -216,7 +216,7 @@ bot/                       Telegram and Discord bot (Node)
   src/near/                NEAR: accounts, orbit, staking, Sputnik, integrations
   scripts/                 publish contracts, deploy the factory, local node runs
 docs/                      SPEC.md (design), sandbox.md (local node), hosting.md, testnet-check.md
-Dockerfile, render.yaml    hosting the bot
+Dockerfile, railway.json, render.yaml   hosting the bot (Railway or Render)
 supabase/schema.sql        the bot's database
 ```
 
@@ -285,7 +285,7 @@ npm start                                # Telegram, and Discord if its token is
 ```
 
 To keep the bot running without your computer, host it: the repository
-includes a `Dockerfile` and a Render Blueprint (`render.yaml`). See [docs/hosting.md](docs/hosting.md).
+includes a `Dockerfile`, a Railway config and a Render Blueprint. See [docs/hosting.md](docs/hosting.md).
 
 In a Telegram group, with the bot as a group admin:
 
