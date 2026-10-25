@@ -199,6 +199,23 @@ export function wirePrice(px, szDecimals) {
   return wireNumber(significant, Math.max(0, 6 - szDecimals)).replace(/^$/, "0");
 }
 
+/** Hyperliquid refuses an order worth less than this, in USD. */
+export const MIN_ORDER_USD = 10;
+
+/**
+ * The order size for about `usd` of a coin at `mid`, in its size steps
+ * (szDecimals). Rounded down, unless that would leave it under
+ * MIN_ORDER_USD at the order's own price (a sell's is 1% under the mid),
+ * then up by as few steps as it takes.
+ */
+export function orderSize(usd, mid, szDecimals, isBuy, slippage = 0.01) {
+  const step = 10 ** -szDecimals;
+  const px = mid * (isBuy ? 1 + slippage : 1 - slippage);
+  let size = Number(wireNumber(usd / mid, szDecimals));
+  while (size * Math.min(px, mid) < MIN_ORDER_USD && usd >= MIN_ORDER_USD) size = Number((size + step).toFixed(szDecimals));
+  return size;
+}
+
 /** Sets `asset`'s leverage for the account (cross margin). */
 export const updateLeverage = (asset, leverage) => ({ type: "updateLeverage", asset, isCross: true, leverage });
 

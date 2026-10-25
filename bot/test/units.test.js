@@ -298,3 +298,13 @@ test("telegram polling starts again after a 409 Conflict (two copies during a de
   await polling.stop();
   assert.equal(polling.isRunning(), false);
 });
+
+test("Hyperliquid order sizes: rounded to the coin's steps, never under the $10 minimum", async () => {
+  const { orderSize, MIN_ORDER_USD } = await import("../src/near/hyperliquid.js");
+  assert.equal(MIN_ORDER_USD, 10);
+  // $10 of BTC at $67,123: 0.000148 rounds down to 0.00014 ($9.40), so up to 0.00015.
+  assert.equal(orderSize(10, 67123, 5, true), 0.00015);
+  assert.ok(orderSize(10, 67123, 5, false) * 67123 * 0.99 >= 10, "a sell's price is under the mid");
+  // Larger orders just round down.
+  assert.equal(orderSize(300, 3300, 4, true), 0.0909);
+});

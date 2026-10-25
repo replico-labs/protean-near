@@ -356,8 +356,9 @@ function openPosition(side) {
       const mid = t.mids[market?.coin];
       if (!market || !mid) throw new UserError(`Hyperliquid has no ${coin} market right now.`);
       if (leverage > t.rules.maxLeverage || leverage > market.maxLeverage) throw new UserError(`Leverage is limited to ${Math.min(t.rules.maxLeverage, market.maxLeverage)}× here.`);
+      if (amount < services.hyperliquid.MIN_ORDER_USD) throw new UserError(`Hyperliquid's smallest order is ${usd(services.hyperliquid.MIN_ORDER_USD)}.`);
       const isBuy = side === "long";
-      const size = amount / mid;
+      const size = services.hyperliquid.orderSize(amount, mid, market.szDecimals, isBuy);
       const held = Number(t.state.positions.find((p) => p.coin === market.coin)?.size ?? 0);
       const after = Math.abs(held + (isBuy ? size : -size)) * mid;
       if (after > t.rules.maxPositionUsd) {

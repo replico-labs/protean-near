@@ -712,7 +712,8 @@ test("trading from the chat: a vote names the traders and limits; only traders t
   assert.match(await said("long", ["DOGE", "50"]), /trades only ETH, BTC/);
   assert.match(await said("long", ["ETH", "500", "6x"]), /Leverage is limited to 5×/);
   // The account already holds 0.1 ETH ($330): $800 more would make $1,130.
-  assert.match(await said("long", ["ETH", "800"]), /make the DAO's ETH position \$1,130; the DAO allows \$1,000 per market \(room for about \$670 more\)/);
+  assert.match(await said("long", ["ETH", "800"]), /make the DAO's ETH position \$1,129\.92; the DAO allows \$1,000 per market \(room for about \$670 more\)/);
+  assert.match(await said("long", ["ETH", "5"]), /Hyperliquid's smallest order is \$10/);
   assert.match(await said("short", ["ETH", "50"], { userId: "7" }), /Only the DAO's traders/);
   assert.equal(calls.filter((c) => c[0] === "sendL1").length, 0, "nothing sent so far");
 
