@@ -13,10 +13,12 @@ This repository holds both halves:
   Sputnik DAO.
 - **The Protean bot**, which runs the DAO from the chat.
 
-> Status: the contracts are published on NEAR testnet
-> (`orbits/deployments/testnet.json`). Everything runs end to end on a local
-> NEAR node (`docs/sandbox.md`): the full flow, every governance model, and
-> every integration.
+> Status: live on NEAR testnet. Try the bot at
+> [@proteannear_bot](https://t.me/proteannear_bot); the contracts are in
+> `orbits/deployments/testnet.json`. Aave runs on Base Sepolia and trading
+> on Hyperliquid testnet, both through Chain Signatures. NEAR Intents exists
+> only on mainnet, so it's tested against its contracts on a local NEAR node
+> (`docs/sandbox.md`), along with every governance model and the full flow.
 
 ## How it works
 
