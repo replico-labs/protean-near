@@ -170,6 +170,29 @@ test("pages: the HTTP API answers the website, with CORS for it only", async () 
   }
 });
 
+test("pages: a decision-markets proposal shows its markets, not votes", async () => {
+  const DM = "dm.ark.protean.testnet";
+  links["telegram:-100"] = { daoId: DAO, orbitId: DM, model: "decisionMarkets", tokenId: "token.ark", stakingId: "staking.ark" };
+  proposals[DM] = [orbitProposal(0)];
+  const pool = (token, near) => ({ token: String(token * E18), near: String(near * 10n ** 24n), cumulative: "0", last: "0" });
+  let exchange = { token_seed: String(1000n * E18), near_seed: "0", opened_at: null, deadline: "3600000000000", pass: pool(0n, 0n), fail: pool(0n, 0n), reclaimed: false };
+  services.orbit.getExchange = async () => [exchange, "0", "0"];
+  await pages.proposalCreated(ctx, links["telegram:-100"], 0);
+  store.age({ network: "near-testnet", orbit_id: DM, proposal_id: "0" }, 7);
+  assert.equal((await pages.getProposalPage("near-testnet", DM, "0")).body.submittable, true, "not seeded yet");
+  let facts = (await pages.getProposalPage("near-testnet", DM, "0")).body.live.facts;
+  assert.deepEqual(facts.map((f) => [f.label, f.value]), [["Token seed", "1000 ARK"], ["NEAR seed", "waiting"]]);
+
+  exchange = { ...exchange, near_seed: String(10n ** 26n), opened_at: "1000000000", pass: pool(800n, 120n), fail: pool(1200n, 80n) };
+  // Averages: yocto per raw unit ×10^18, i.e. yocto per whole token here.
+  services.orbit.getExchange = async () => [exchange, String(15n * 10n ** 22n), String(7n * 10n ** 22n)];
+  const page = await pages.getProposalPage("near-testnet", DM, "0");
+  facts = page.body.live.facts;
+  assert.deepEqual(facts.map((f) => [f.label, f.value]), [["Pass price", "0.15 NEAR"], ["Fail price", "0.0666 NEAR"], ["Pass average", "0.15 NEAR"], ["Fail average", "0.07 NEAR"], ["Ahead", "Pass"]]);
+  assert.deepEqual(page.body.live.times.map((t) => t.label), ["Markets opened", "Trading ends"]);
+  assert.equal(page.body.submittable, false, "past the grace period, trading has started");
+});
+
 test("pages: without the settings, no Details button and no private link", () => {
   assert.deepEqual(proposalButtons("tokenWeighted", 3, "Active", null).at(-1), [{ label: "🔄 Status", cmd: "proposal 3" }]);
   assert.deepEqual(proposalButtons("tokenWeighted", 3, "Active", "https://x/p/1").at(-1)[1], { label: "📄 Details", url: "https://x/p/1" });

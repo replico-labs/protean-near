@@ -365,6 +365,27 @@ async function findDao(account) {
 const seconds = (ns) => (ns && BigInt(ns) > 0n ? Number(BigInt(ns) / 1_000_000_000n) : null);
 const plain = (text) => String(text).replace(/[`*]/g, "");
 
+/**
+ * Decision markets: the seeds until both are in, then each market's price
+ * (NEAR per token) and time-weighted average, which decides. The averages
+ * assume today's prices hold until trading ends.
+ */
+function marketFacts(e, passTwap, failTwap, token) {
+  if (!e.opened_at) return [{ label: "Token seed", value: BigInt(e.token_seed) > 0n ? token.format(e.token_seed) : "waiting" }, { label: "NEAR seed", value: BigInt(e.near_seed) > 0n ? `${formatNear(e.near_seed)} NEAR` : "waiting" }];
+  const one = 10n ** BigInt(token.decimals);
+  const price = (pool) => (BigInt(pool.token) > 0n ? `${formatNear((BigInt(pool.near) * one) / BigInt(pool.token))} NEAR` : "0 NEAR");
+  // The contract's averages are yocto per raw unit, ×10^18.
+  const average = (twap) => `${formatNear((BigInt(twap) * one) / 10n ** 18n)} NEAR`;
+  const leading = BigInt(passTwap) > BigInt(failTwap) ? "Pass" : BigInt(failTwap) > BigInt(passTwap) ? "Fail" : "Even";
+  return [
+    { label: "Pass price", value: price(e.pass) },
+    { label: "Fail price", value: price(e.fail) },
+    { label: "Pass average", value: average(passTwap) },
+    { label: "Fail average", value: average(failTwap) },
+    { label: "Ahead", value: leading },
+  ];
+}
+
 /** What /proposal shows, as data the page renders (null if there's no such proposal). */
 async function liveProposal(link, id) {
   const token = await tokenInfo(link);
@@ -383,15 +404,23 @@ async function liveProposal(link, id) {
     started = Object.keys(p.votes ?? {}).length > 0;
   } else {
     const fmt = token.format;
+    let backed = false;
     if (link.model === "conviction") {
       facts.push({ label: "Conviction", value: fmt(p.conviction) }, { label: "Needed", value: fmt(p.required_conviction) }, { label: "Backed by", value: fmt(p.support) });
+    } else if (link.model === "decisionMarkets") {
+      const found = await services.orbit.getExchange(link.orbitId, id).catch(() => null);
+      if (found) {
+        const [e, passTwap, failTwap] = found;
+        facts.push(...marketFacts(e, passTwap, failTwap, token));
+        times.push({ label: "Markets opened", at: seconds(e.opened_at) }, { label: "Trading ends", at: seconds(e.deadline) });
+        backed = Boolean(e.opened_at);
+      }
     } else {
       const unit = link.model === "delegate" || link.model === "sortition" ? String : link.model === "quadratic" ? (v) => `${v} (√ weight)` : fmt;
       facts.push({ label: "For", value: unit(p.for_votes) }, { label: "Against", value: unit(p.against_votes) }, { label: "Abstain", value: unit(p.abstain_votes) }, { label: "Voters", value: String(p.voters) });
       times.push({ label: "Voting opens", at: seconds(p.start) }, { label: p.state === "ChallengeWindow" ? "Challenges close" : "Voting ends", at: seconds(p.end) });
     }
     if (p.challenger) facts.push({ label: "Challenged by", value: p.challenger, address: true });
-    let backed = false;
     if (link.model === "sowellian") {
       const bet = await services.orbit.getBet(link.orbitId, id).catch(() => null);
       if (bet) {
