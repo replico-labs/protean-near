@@ -18,7 +18,9 @@ import { formatTime, nowNs } from "./helpers.js";
  * Each chat's link remembers the last stage seen of its latest proposals
  * (`watch`), so a restart doesn't repeat old news. The first look at a
  * chat, or at a new orbit after a model switch, only records stages.
- * Board DAOs are left out: their proposals execute when approved.
+ * Board DAOs from before board orbits are left out: their proposals
+ * execute when approved. Behind a guard, its instructions get their own
+ * notices (scanGuard).
  */
 
 const SCAN = 15;
@@ -83,7 +85,7 @@ async function marketFor(link, p, prev) {
 
 /** Looks at one chat's latest proposals and posts what changed: `post(chatId, text, buttons)`. */
 export async function scanChat(platform, chatId, link, post, cmd, now = nowNs()) {
-  if (link.model === "board" || !link.orbitId) return;
+  if (!link.orbitId) return;
   const count = await services.orbit.getProposalCount(link.orbitId);
   const list = count ? await services.orbit.getProposals(link.orbitId, Math.max(0, count - SCAN), SCAN) : [];
   const period = await periodOf(link.orbitId);
@@ -113,6 +115,38 @@ export async function scanChat(platform, chatId, link, post, cmd, now = nowNs())
   }
 }
 
+const GUARD_NOTICES = {
+  Pending: (i, need) => `🛡 Guard instruction *#${i.id}* — ${readable(i.description)}: it needs ${need} signer${need === 1 ? "" : "s"} to confirm before it runs.`,
+  Executed: (i) => `▶️ Guard instruction *#${i.id}* — ${readable(i.description)}: confirmed, and it ran on the DAO.`,
+  Rejected: (i) => `❌ Guard instruction *#${i.id}* — ${readable(i.description)}: the signers rejected it.`,
+  Expired: (i) => `⌛ Guard instruction *#${i.id}* — ${readable(i.description)}: not confirmed in time.`,
+};
+
+/**
+ * Behind a guard: posts new instructions, with Confirm and Reject buttons,
+ * and when one runs, is rejected or expires. The first look only records.
+ */
+export async function scanGuard(platform, chatId, link, post) {
+  if (!link.guardId) return;
+  const count = await services.guard.getInstructionCount(link.guardId);
+  const list = count ? await services.guard.getInstructions(link.guardId, Math.max(0, count - SCAN), SCAN) : [];
+  const seen = link.guardWatch?.guard === link.guardId ? link.guardWatch.states : null;
+  const states = Object.fromEntries(list.map((i) => [i.id, i.state]));
+  if (seen) {
+    const { threshold } = await services.guard.getConfig(link.guardId);
+    for (const i of list) {
+      if (seen[i.id] === i.state || (seen[i.id] === undefined && i.state !== "Pending")) continue;
+      const text = GUARD_NOTICES[i.state]?.(i, threshold - i.confirmations);
+      const buttons = i.state === "Pending" ? [[{ label: "✅ Confirm", cmd: `confirm ${i.id}` }, { label: "❌ Reject", cmd: `reject ${i.id}` }]] : [];
+      if (text) await post(chatId, text, buttons);
+    }
+  }
+  if (JSON.stringify(states) !== JSON.stringify(seen)) {
+    const current = services.db.getChatDao(platform, chatId);
+    if (current?.guardId === link.guardId) services.db.setChatDao(platform, chatId, { ...current, guardWatch: { guard: link.guardId, states } });
+  }
+}
+
 /**
  * A proposal this chat just made: recorded as seen, so the chat isn't told
  * about it again. Other chats linked to the DAO still are.
@@ -138,6 +172,7 @@ export function startNotifier(platform, post, cmd) {
       const now = await services.clock.now().catch(() => nowNs());
       for (const [chatId, link] of services.db.chatsOn(platform)) {
         await scanChat(platform, chatId, link, post, cmd, now).catch((err) => console.error(`[${platform}] Notifications for ${chatId} failed:`, err.message ?? err));
+        await scanGuard(platform, chatId, services.db.getChatDao(platform, chatId) ?? link, post).catch((err) => console.error(`[${platform}] Guard notices for ${chatId} failed:`, err.message ?? err));
       }
     } finally {
       running = false;

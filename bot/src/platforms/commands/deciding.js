@@ -1,10 +1,11 @@
 import { services } from "../services.js";
+import { isCoreBoard } from "../../near/models.js";
 import { UserError, reply, requireDao, userAccount, parseId, parseAccountId, choiceOf, tokenInfo, explain } from "../helpers.js";
-import { loadProposal, describeProposal, followSwap } from "../proposals.js";
+import { loadProposal, describeProposal, syncGovernance } from "../proposals.js";
 import { rememberExecution, relayExecution, retryRelay } from "./evm.js";
 
 const STAKE_VOTING = ["tokenWeighted", "quadratic", "liquid", "optimistic", "sowellian"];
-const COUNCILS = ["delegate", "sortition"];
+const COUNCILS = ["delegate", "sortition", "board"];
 
 const idOption = [{ name: "id", description: "Proposal number", required: true, type: "integer" }];
 
@@ -28,7 +29,7 @@ const vote = {
   section: "Deciding",
   usage: "<id> for|against|abstain",
   description: "Vote on a proposal",
-  models: ["board", ...STAKE_VOTING, ...COUNCILS],
+  models: [...STAKE_VOTING, ...COUNCILS],
   options: [...idOption, { name: "choice", description: "for, against or abstain", required: true, choices: ["for", "against", "abstain"] }],
   async run(ctx) {
     const dao = requireDao(ctx, this.models);
@@ -36,7 +37,7 @@ const vote = {
     const id = parseId(ctx.args[0], usage);
     const choice = choiceOf(ctx.args[1], usage);
     const account = await userAccount(ctx);
-    if (dao.model === "board") {
+    if (isCoreBoard(dao)) {
       if (choice === "Abstain") throw new UserError("Board members approve or reject.");
       const evmTxs = services.evm.txsIn((await services.core.getCoreProposal(dao.daoId, id))?.description);
       const action = choice === "For" ? "VoteApprove" : "VoteReject";
@@ -47,7 +48,7 @@ const vote = {
       );
       const p = await services.core.getCoreProposal(dao.daoId, id);
       const passed = p.status === "Approved";
-      const swapped = passed ? await followSwap(ctx, dao, p.kind, account) : "";
+      const swapped = passed ? await syncGovernance(ctx.platform, ctx.chatId, account) : "";
       const relayed = passed && evmTxs ? await relayExecution(ctx, key, `${ctx.cmd("execute")} ${id}`, evmTxs, outcome) : "";
       const result = await show(ctx, dao, id, `🗳 Voted *${choice.toLowerCase()}* on #${id}.${passed ? " It passed and was executed." : ""}`);
       return { ...result, text: result.text + swapped + relayed };
@@ -68,13 +69,13 @@ const execute = {
   section: "Deciding",
   usage: "<id>",
   description: "Execute a passed proposal on the DAO, or send what an executed one signed",
-  models: ["board", ...STAKE_VOTING, "conviction", ...COUNCILS, "decisionMarkets"],
+  models: [...STAKE_VOTING, "conviction", ...COUNCILS, "decisionMarkets"],
   options: idOption,
   async run(ctx) {
     const dao = requireDao(ctx, this.models);
     const id = parseId(ctx.args[0], `${ctx.cmd("execute")} <id>`);
     const retry = `${ctx.cmd("execute")} ${id}`;
-    if (dao.model === "board") {
+    if (isCoreBoard(dao)) {
       // A board proposal executes when it's approved; this only sends what an executed one signed.
       const p = await services.core.getCoreProposal(dao.daoId, id).catch(() => null);
       const evmTxs = services.evm.txsIn(p?.description);
@@ -100,7 +101,13 @@ const execute = {
     });
     const p = await services.orbit.getProposal(dao.orbitId, id);
     if (p.state !== "Executed") return show(ctx, dao, id, `#${id} couldn't be executed on the DAO yet. Try again in a minute.`);
-    const swapped = await followSwap(ctx, dao, p.kind, account);
+    if (p.guard) {
+      // Behind a guard: it runs once the signers confirm it (or at once, for new signers after their tenure).
+      const synced = await syncGovernance(ctx.platform, ctx.chatId, account);
+      const result = await show(ctx, dao, id, `🛡 #${id} went to the guard as instruction #${p.guard_instruction}: it runs on the DAO once enough signers confirm it.`);
+      return { ...result, text: result.text + synced };
+    }
+    const swapped = await syncGovernance(ctx.platform, ctx.chatId, account);
     const relayed = evmTxs ? await relayExecution(ctx, String(id), retry, evmTxs, outcome) : "";
     const result = await show(ctx, dao, id, `▶️ #${id} was executed on the DAO.`);
     return { ...result, text: result.text + swapped + relayed };
@@ -116,6 +123,7 @@ const cancel = {
   async run(ctx) {
     const dao = requireDao(ctx, this.models);
     const id = parseId(ctx.args[0], `${ctx.cmd("cancel")} <id>`);
+    if (isCoreBoard(dao)) throw new UserError("A board proposal can't be withdrawn; members reject it with `vote`.");
     const account = await userAccount(ctx);
     await explain(() => services.orbit.cancel(account, dao.orbitId, id), { ERR_NOT_PROPOSER: "Only its proposer can cancel a proposal.", ERR_PROPOSAL_CLOSED: "That proposal is already closed." });
     return reply(`#${id} was cancelled.`);

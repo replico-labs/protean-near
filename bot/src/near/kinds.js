@@ -107,6 +107,34 @@ export function intentsWithdraw({ intents, token, amount, receiver }) {
   return functionCall(intents, [{ method: "ft_withdraw", args: { token, receiver_id: receiver, amount: String(amount) }, deposit: 1n, tgas: 60 }]);
 }
 
+/** Mints `amount` of the DAO's capped token to `account` (the core is its only minter). */
+export function mint(tokenId, account, amount) {
+  return functionCall(tokenId, [{ method: "mint", args: { account_id: account, amount: String(amount) }, deposit: 1n, tgas: 20 }]);
+}
+
+/** Replaces a board orbit's members and quorum. */
+export function setBoard(orbitId, members, quorum) {
+  return functionCall(orbitId, [{ method: "set_board", args: { members, quorum }, tgas: 10 }]);
+}
+
+/** Behind a guard: moves the guard to `orbitId`, which it checks is bound to the DAO. */
+export function setGovernance(guardId, orbitId) {
+  return functionCall(guardId, [{ method: "set_governance", args: { governance: orbitId }, tgas: 100 }]);
+}
+
+/**
+ * Replaces a guard's signers. The guard applies it itself, without the
+ * signers, once their tenure is over (orbits/orbit-guard).
+ */
+export function setSigners(guardId, signers, threshold) {
+  return functionCall(guardId, [{ method: "set_signers", args: { signers, threshold }, tgas: 10 }]);
+}
+
+/** After a token change: swaps `amount` of the treasury's old token for the new one in the migrator. */
+export function migrateTreasury(oldToken, migrator, amount) {
+  return functionCall(oldToken, [{ method: "ft_transfer_call", args: { receiver_id: migrator, amount: String(amount), msg: "" }, deposit: 1n, tgas: 150 }]);
+}
+
 /** The JSON a FunctionCall action was sent with, or null. */
 function callArgs(action) {
   try {
@@ -125,7 +153,9 @@ export function kindTokens(kind) {
   if (swap) return [swap.tokenIn, swap.tokenOut].filter((t) => t !== "NEAR");
   const deposit = describeIntentsDeposit(body);
   if (deposit) return deposit.token === "NEAR" ? [] : [deposit.token];
-  const withdraw = body.actions[0]?.method_name === "ft_withdraw" && callArgs(body.actions[0]);
+  const first = body.actions[0]?.method_name;
+  if (first === "mint" || (first === "ft_transfer_call" && callArgs(body.actions[0])?.msg === "")) return [body.receiver_id];
+  const withdraw = first === "ft_withdraw" && callArgs(body.actions[0]);
   return withdraw ? [withdraw.token] : [];
 }
 
@@ -168,7 +198,19 @@ function describeCall(body, { formatNear = String, formatToken = (id, amount) =>
   if (deposit) return `Send ${amount(deposit.token, deposit.amount)} into NEAR Intents to fill quote ${deposit.depositAddress.slice(0, 10)}…`;
   const [first] = body.actions;
   const at = body.receiver_id;
+  const args = (first && callArgs(first)) ?? {};
   switch (first?.method_name) {
+    case "mint":
+      return `Mint ${formatToken(at, args.amount)} to ${args.account_id}`;
+    case "set_board":
+      return `Set the board to ${(args.members ?? []).join(", ")}, ${args.quorum} to vote`;
+    case "set_governance":
+      return `Hand the guard (${at}) to ${args.governance}`;
+    case "set_signers":
+      return `Replace the guard's signers with ${(args.signers ?? []).join(", ")}, ${args.threshold} to confirm`;
+    case "ft_transfer_call":
+      if (args.msg === "") return `Swap the treasury's ${formatToken(at, args.amount)} for the new token (${args.receiver_id})`;
+      break;
     case "deposit_and_stake":
       return `Liquid-stake ${formatNear(first.deposit)} NEAR with ${at}`;
     case "unstake":
@@ -184,9 +226,8 @@ function describeCall(body, { formatNear = String, formatToken = (id, amount) =>
     case "withdraw_all":
     case "withdraw_unstaked":
       return `Withdraw unstaked NEAR from ${at}`;
-    default:
-      return `Call ${body.actions.map((a) => a.method_name).join(", ")} on ${at}`;
   }
+  return `Call ${body.actions.map((a) => a.method_name).join(", ")} on ${at}`;
 }
 
 /** A one-line, human description of `kind`. */
@@ -202,7 +243,7 @@ export function describeKind(kind, { formatNear, formatToken } = {}) {
       return describeCall(body, { formatNear, formatToken });
     case "ChangePolicyAddOrUpdateRole":
       return body.role?.name === "governance"
-        ? `Swap governance to ${body.role.kind?.Group?.[0]}`
+        ? `Hand the DAO to ${body.role.kind?.Group?.[0]}`
         : `Change the "${body.role?.name}" role`;
     default:
       return name ?? "Unknown action";

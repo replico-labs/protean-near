@@ -157,7 +157,7 @@ mod tests {
     fn bot_model_settings_are_valid_orbit_models() {
         let fixtures: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(include_str!("../../../bot/test/fixtures/models.json")).unwrap();
-        assert_eq!(fixtures.len(), 9, "every orbit model");
+        assert_eq!(fixtures.len(), 10, "every orbit model");
         for (name, json) in fixtures {
             let model: orbit::Model = serde_json::from_value(json).unwrap_or_else(|e| panic!("{name}: {e}"));
             model.validate();

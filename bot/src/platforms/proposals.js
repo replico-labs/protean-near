@@ -4,6 +4,7 @@ import { proposalButtons } from "../buttons.js";
 import { proposalPageUrl } from "../proposalPages.js";
 import { services } from "./services.js";
 import { formatNear, formatTime, nowNs } from "./helpers.js";
+import { isCoreBoard } from "../near/models.js";
 
 /**
  * Reading and describing a chat's proposals: orbit proposals, or for a
@@ -18,13 +19,13 @@ export function swapTarget(kind) {
 
 /** One proposal, normalized: { id, description, kind, state, lines, buttons } or null. */
 export async function loadProposal(link, id, token) {
-  if (link.model === "board") {
+  if (isCoreBoard(link)) {
     const p = await services.core.getCoreProposal(link.daoId, id).catch(() => null);
     if (!p) return null;
     const counts = p.vote_counts?.governance ?? ["0", "0", "0"];
     const lines = [`Status: *${p.status}*`, `Approve ${counts[0]} · Reject ${counts[1]}`];
     await services.tokens.load(kindTokens(p.kind));
-    return { id, description: p.description, kind: p.kind, state: p.status, lines, buttons: proposalButtons("board", id, p.status, proposalPageUrl(link, id)) };
+    return { id, description: p.description, kind: p.kind, state: p.status, lines, buttons: proposalButtons("coreBoard", id, p.status, proposalPageUrl(link, id)) };
   }
   const p = await services.orbit.getProposal(link.orbitId, id);
   if (!p) return null;
@@ -33,8 +34,8 @@ export async function loadProposal(link, id, token) {
   const lines = [`Status: *${p.state}*${p.sending ? " (executing...)" : ""}`];
   if (link.model === "conviction") {
     lines.push(`Conviction ${fmt(p.conviction)} of ${fmt(p.required_conviction)} needed · backed by ${fmt(p.support)}`);
-  } else if (link.model === "delegate" || link.model === "sortition") {
-    lines.push(`Council votes: for ${p.for_votes} · against ${p.against_votes} · abstain ${p.abstain_votes}`);
+  } else if (link.model === "delegate" || link.model === "sortition" || link.model === "board") {
+    lines.push(`${link.model === "board" ? "Member" : "Council"} votes: for ${p.for_votes} · against ${p.against_votes} · abstain ${p.abstain_votes}`);
   } else {
     const unit = link.model === "quadratic" ? (v) => `${v} (√ weight)` : fmt;
     lines.push(`For ${unit(p.for_votes)} · Against ${unit(p.against_votes)} · Abstain ${unit(p.abstain_votes)} · ${p.voters} voter${p.voters === 1 ? "" : "s"}`);
@@ -47,6 +48,13 @@ export async function loadProposal(link, id, token) {
   if (p.state === "Active" && link.model !== "conviction") lines.push(`Voting ends ${formatTime(p.end)}`);
   if (p.state === "ChallengeWindow") lines.push(`Passes unless challenged by ${formatTime(p.end)}`);
   if (p.executable_after && BigInt(p.executable_after) > nowNs()) lines.push(`Executable from ${formatTime(p.executable_after)}`);
+  if (p.guard) {
+    const i = await services.guard.getInstruction(p.guard, p.guard_instruction).catch(() => null);
+    const config = i && (await services.guard.getConfig(p.guard).catch(() => null));
+    if (i && config) {
+      lines.push(i.state === "Pending" ? `🛡 Waiting for the guard: instruction #${i.id}, ${i.confirmations} of ${config.threshold} signers confirmed` : `🛡 Guard instruction #${i.id}: *${i.state}*`);
+    }
+  }
   if (p.core_proposal_id !== null && p.core_proposal_id !== undefined) {
     const coreProposal = await services.core.getCoreProposal(link.daoId, p.core_proposal_id).catch(() => null);
     lines.push(`On the DAO: proposal ${p.core_proposal_id}${coreProposal ? `, ${coreProposal.status}` : ""}`);
@@ -103,7 +111,7 @@ export function describeProposal(p, token) {
 
 /** The latest `limit` proposals, newest first, as [id, state, description]. */
 export async function latestProposals(link, limit = 10) {
-  if (link.model === "board") {
+  if (isCoreBoard(link)) {
     const last = await services.core.getLastProposalId(link.daoId);
     const from = Math.max(0, last - limit);
     const list = await services.core.getCoreProposals(link.daoId, from, limit);
@@ -115,19 +123,59 @@ export async function latestProposals(link, limit = 10) {
 }
 
 /**
- * After a proposal executed: if it was a swap, the chat now follows the new
- * orbit and its model; a conviction orbit also becomes the staking locker.
- * Returns a line for the reply, or "".
+ * Brings the chat's link in line with who governs the DAO now, after
+ * something that can change it executed: a model switch, a token change,
+ * a guard turned on or off, or (behind a guard) a confirmed instruction.
+ * Reads the chain: the core's member is an orbit, or a guard whose
+ * governance is the orbit. Returns a line for the reply, or "". `account`
+ * (optional) claims the staking locker for a new conviction orbit.
  */
-export async function followSwap(ctx, link, kind, account) {
-  const newOrbit = swapTarget(kind);
-  if (!newOrbit) return "";
+export async function syncGovernance(platform, chatId, account = null) {
+  const link = services.db.getChatDao(platform, chatId);
+  if (!link || isCoreBoard(link)) return link && !link.orbitId ? await syncCoreBoard(platform, chatId, link) : "";
   const governing = await services.core.governingMembers(link.daoId);
-  if (!governing.includes(newOrbit)) return "";
-  const { name: model } = services.orbit.modelOf(await services.orbit.getModel(newOrbit));
-  if (model === "conviction") await services.orbit.claimLocker(account, newOrbit);
-  // The stored link, which may have changed since `link` was read (executions remembered meanwhile).
-  const current = services.db.getChatDao(ctx.platform, ctx.chatId) ?? link;
-  services.db.setChatDao(ctx.platform, ctx.chatId, { ...current, orbitId: newOrbit, model, pendingSwap: undefined });
-  return `\n\n🔀 The DAO now runs *${model}* governance (\`${newOrbit}\`). Same treasury, same stakes.`;
+  if (governing.length !== 1) return "";
+  const [member] = governing;
+  let orbitId = member;
+  let guardId = null;
+  if (member !== link.orbitId) {
+    const governance = await services.guard.getConfig(member).then((c) => c.governance).catch(() => null);
+    if (governance) [orbitId, guardId] = [governance, member];
+  } else if (link.guardId) {
+    guardId = null;
+  }
+  if (orbitId === link.orbitId && (guardId ?? null) === (link.guardId ?? null)) return "";
+  return adopt(platform, chatId, link, orbitId, guardId, account);
+}
+
+/** A core board that handed itself to an orbit (or guard). */
+async function syncCoreBoard(platform, chatId, link) {
+  const governing = await services.core.governingMembers(link.daoId);
+  if (governing.length !== 1 || !(await services.orbit.getDao(governing[0]).catch(() => null))) return "";
+  return adopt(platform, chatId, link, governing[0], null, null);
+}
+
+async function adopt(platform, chatId, link, orbitId, guardId, account) {
+  const [model, tokenId, stakingId] = await Promise.all([
+    services.orbit.getModel(orbitId).then((m) => services.orbit.modelOf(m).name),
+    services.orbit.getToken(orbitId),
+    services.orbit.getStakingContract(orbitId),
+  ]);
+  if (model === "conviction" && account) await services.orbit.claimLocker(account, orbitId).catch(() => {});
+  const lines = [];
+  const next = { ...link, orbitId, model, tokenId, stakingId, guardId: guardId ?? undefined, pendingSwap: undefined, pendingGuard: undefined };
+  if (orbitId !== link.orbitId) lines.push(`🔀 The DAO now runs *${model}* governance (\`${orbitId}\`). Same treasury.`);
+  if (tokenId !== link.tokenId) {
+    const change = link.pendingTokenChange?.orbitId === orbitId ? link.pendingTokenChange : null;
+    if (change) next.migration = { oldTokenId: link.tokenId, oldStakingId: link.stakingId, migratorId: change.migratorId };
+    next.pendingTokenChange = undefined;
+    const token = await services.staking.tokenMetadata(tokenId);
+    lines.push(`🪙 The DAO's token is now *${token.symbol}* (\`${tokenId}\`).${change ? " Swap your old tokens with `/migrate all`; they're staked in the new vault for you." : ""}`);
+  } else if (orbitId !== link.orbitId) {
+    lines.push("Stakes carry over.");
+  }
+  if (guardId && guardId !== link.guardId) lines.push(`🛡 A guard (\`${guardId}\`) now confirms what passes before it runs.`);
+  if (!guardId && link.guardId) lines.push("🛡 The guard is off: passed proposals run on the DAO directly.");
+  services.db.setChatDao(platform, chatId, next);
+  return lines.length ? `\n\n${lines.join(" ")}` : "";
 }

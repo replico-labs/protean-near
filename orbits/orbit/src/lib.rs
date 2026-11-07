@@ -13,6 +13,11 @@
 //! core, is written once here and shared by all of them. Stake comes from
 //! the DAO's staking contract (orbits/orbit-staking), read by snapshot.
 //!
+//! A guard (orbits/orbit-guard) may stand between the orbit and the core:
+//! the core's member is then the guard, whose governance is this orbit.
+//! `execute` reads the core's policy each time and sends a passed proposal
+//! to the core, or to the guard as an instruction its signers confirm.
+//!
 //! Files: ballot.rs (token-weighted, quadratic, liquid and optimistic
 //! votes), conviction.rs, council.rs (delegate and sortition),
 //! sowellian.rs and markets.rs (decision markets).
@@ -28,7 +33,8 @@
         feature = "delegate",
         feature = "sortition",
         feature = "sowellian",
-        feature = "decision-markets"
+        feature = "decision-markets",
+        feature = "board"
     )),
     allow(dead_code, unused_imports, unused_variables)
 )]
@@ -50,15 +56,17 @@ use near_sdk::{
     AccountId, BorshStorageKey, Gas, GasWeight, NearToken, PanicOnDefault, Promise, PromiseOrValue, env, log, near,
     require,
 };
-use orbit_common::{KindClass, act_proposal_args, add_proposal_args, parse_kind};
+use orbit_common::{Binding, KindClass, act_proposal_args, add_proposal_args, governance_members, parse_kind};
 
 pub(crate) const GAS_VIEW: Gas = Gas::from_tgas(10);
 pub(crate) const GAS_CALLBACK: Gas = Gas::from_tgas(15);
 pub(crate) const GAS_FT_TRANSFER: Gas = Gas::from_tgas(15);
 const GAS_ADD_PROPOSAL: Gas = Gas::from_tgas(20);
 const GAS_ACT_PROPOSAL: Gas = Gas::from_tgas(30);
-/// Gas `execute` needs to send a proposal to the core and approve it there.
-const GAS_TO_SEND: Gas = Gas::from_tgas(150);
+const GAS_GUARD_INSTRUCTION: Gas = Gas::from_tgas(20);
+/// Gas `execute` needs to check where to send a proposal, send it to the
+/// core and approve it there.
+const GAS_TO_SEND: Gas = Gas::from_tgas(200);
 /// A send that hasn't finished after this long is assumed lost and may be
 /// retried. A NEAR call chain settles within seconds.
 const SEND_TIMEOUT_NS: u64 = 10 * 60 * 1_000_000_000;
@@ -160,6 +168,8 @@ pub struct Proposal {
     queued_at: Option<u64>,
     /// Sowellian and decision markets keep their market here.
     market: Option<Market>,
+    /// Sent to a guard instead of the core: the guard and its instruction id.
+    guard_instruction: Option<(AccountId, u64)>,
 }
 
 #[near(serializers = [borsh])]
@@ -191,6 +201,10 @@ pub struct ProposalView {
     pub required_conviction: U128,
     pub core_proposal_id: Option<u64>,
     pub sending: bool,
+    /// Sent to a guard: the guard and its instruction id. It runs on the
+    /// core once the guard's signers confirm it.
+    pub guard: Option<AccountId>,
+    pub guard_instruction: Option<u64>,
 }
 
 #[near(contract_state)]
@@ -241,6 +255,8 @@ impl Contract {
             _ => None,
         } {
             require!(council.len() <= usize::from(size), "ERR_CONFIG: council larger than council_size");
+        } else if let Model::Board(b) = &model {
+            check_board(&council, b.council.quorum);
         } else {
             require!(council.is_empty(), "ERR_CONFIG: only council models take a council");
         }
@@ -339,7 +355,13 @@ impl Contract {
     }
 
     /// Sends proposal `id`, passed (or queued) and past its timelock, to the
-    /// core and approves it there. Anyone may call it; attach 300 Tgas.
+    /// core and approves it there, or to the guard in front of the core.
+    /// Anyone may call it; attach 300 Tgas.
+    ///
+    /// A swap (handing the core to another orbit or a guard) goes only to
+    /// an account bound to this core (`get_binding`): an orbit whose staking
+    /// vault belongs to this core and holds that orbit's token, or a guard
+    /// whose governance is this orbit.
     pub fn execute(&mut self, id: u64) -> Promise {
         require!(env::prepaid_gas().saturating_sub(env::used_gas()) >= GAS_TO_SEND, "ERR_NOT_ENOUGH_GAS: attach 300 Tgas");
         let now = env::block_timestamp();
@@ -361,26 +383,90 @@ impl Contract {
         }
         match parse_kind(&proposal.kind) {
             Ok((_, KindClass::Swap { new_orbit })) => Promise::new(new_orbit)
-                .function_call("get_dao", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_VIEW)
-                .then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_CALLBACK)
-                        .with_unused_gas_weight(1)
-                        .on_swap_checked(id),
-                ),
-            Ok((_, KindClass::Normal)) => self.add_to_core(id),
+                .function_call("get_binding", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_VIEW)
+                .then(self.callback().on_binding(id)),
+            Ok((_, KindClass::Normal)) => self.route(id),
             Err(err) => env::panic_str(err),
         }
     }
 
+    /// A swap target's binding: a guard answering to this orbit is accepted
+    /// at once; an orbit's staking vault is checked next.
     #[private]
-    pub fn on_swap_checked(&mut self, id: u64) -> PromiseOrValue<()> {
-        if callback_value::<AccountId>().as_ref() == Some(&self.dao_id) {
-            return PromiseOrValue::Promise(self.add_to_core(id));
+    pub fn on_binding(&mut self, id: u64) -> PromiseOrValue<()> {
+        match callback_value::<Binding>() {
+            Some(b) if b.dao_id == self.dao_id => match (b.governance, b.staking_id, b.token_id) {
+                (Some(governance), _, _) if governance == env::current_account_id() => PromiseOrValue::Promise(self.route(id)),
+                (None, Some(staking), Some(token)) => {
+                    let view = |method: &str| Promise::new(staking.clone()).function_call(method, b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_VIEW);
+                    PromiseOrValue::Promise(view("get_dao").and(view("get_token")).then(self.callback().on_vault(id, token)))
+                }
+                _ => self.not_sent(id, "the swap target is a guard for another orbit, or not an orbit"),
+            },
+            _ => self.not_sent(id, "the swap target isn't bound to this core"),
         }
-        log!("Swap target is not an orbit bound to {}; proposal {} not sent", self.dao_id, id);
-        self.end_send(id);
-        PromiseOrValue::Value(())
+    }
+
+    /// The new orbit's vault must belong to this core and hold its token.
+    #[private]
+    pub fn on_vault(&mut self, id: u64, token: AccountId) -> PromiseOrValue<()> {
+        let dao = callback_value_at::<AccountId>(0);
+        let held = callback_value_at::<AccountId>(1);
+        if dao.as_ref() == Some(&self.dao_id) && held.as_ref() == Some(&token) {
+            return PromiseOrValue::Promise(self.route(id));
+        }
+        self.not_sent(id, "the new orbit's staking vault isn't this core's, or holds another token")
+    }
+
+    /// Who the core's member is decides where the proposal goes.
+    #[private]
+    pub fn on_route(&mut self, id: u64) -> PromiseOrValue<()> {
+        let members = callback_value::<Value>().and_then(|policy| governance_members(&policy)).unwrap_or_default();
+        match members.as_slice() {
+            [member] if *member == env::current_account_id() => PromiseOrValue::Promise(self.add_to_core(id)),
+            [member] => PromiseOrValue::Promise(
+                Promise::new(member.clone())
+                    .function_call("get_governance", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_VIEW)
+                    .then(self.callback().on_guard(id, member.clone())),
+            ),
+            _ => self.not_sent(id, "this orbit doesn't govern the core"),
+        }
+    }
+
+    #[private]
+    pub fn on_guard(&mut self, id: u64, guard: AccountId) -> PromiseOrValue<()> {
+        if callback_value::<AccountId>() != Some(env::current_account_id()) {
+            return self.not_sent(id, "this orbit doesn't govern the core, or its guard");
+        }
+        let proposal = self.proposals.get(&id).expect("ERR_NO_PROPOSAL");
+        let kind: Value = serde_json::from_str(&proposal.kind).expect("ERR_KIND_NOT_JSON");
+        PromiseOrValue::Promise(
+            Promise::new(guard.clone())
+                .function_call(
+                    "propose_instruction",
+                    json!({ "description": proposal.description, "kind": kind }).to_string().into_bytes(),
+                    NearToken::from_yoctonear(0),
+                    GAS_GUARD_INSTRUCTION,
+                )
+                .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_sent_to_guard(id, guard)),
+        )
+    }
+
+    /// The guard took the proposal: this orbit's part is done.
+    #[private]
+    pub fn on_sent_to_guard(&mut self, id: u64, guard: AccountId) -> bool {
+        match callback_value::<u64>() {
+            Some(instruction) => {
+                self.proposals.get_mut(&id).expect("ERR_NO_PROPOSAL").guard_instruction = Some((guard, instruction));
+                self.mark_executed(id);
+                true
+            }
+            None => {
+                log!("The guard refused proposal {}", id);
+                self.end_send(id);
+                false
+            }
+        }
     }
 
     #[private]
@@ -401,14 +487,10 @@ impl Contract {
     #[private]
     pub fn on_approved(&mut self, id: u64) -> bool {
         let ok = env::promise_result_checked(0, MAX_RESULT_LEN).is_ok();
-        let proposal = self.proposals.get_mut(&id).expect("ERR_NO_PROPOSAL");
-        proposal.sending_since = None;
         if ok {
-            proposal.executed = true;
-            if let Some(Market::Sowellian(bet)) = &mut proposal.market {
-                bet.measurement_deadline = Some(env::block_timestamp() + bet.measurement_period);
-            }
+            self.mark_executed(id);
         } else {
+            self.end_send(id);
             log!("Core approval of proposal {} failed; call execute to retry", id);
         }
         ok
@@ -469,13 +551,18 @@ impl Contract {
     /// Makes this orbit the staking contract's locker, once it governs the
     /// core (conviction needs it). Anyone may call it.
     pub fn claim_locker(&self) -> Promise {
-        Promise::new(self.staking_id.clone()).function_call("claim_locker", b"{}".to_vec(), NearToken::from_yoctonear(0), Gas::from_tgas(40))
+        Promise::new(self.staking_id.clone()).function_call("claim_locker", b"{}".to_vec(), NearToken::from_yoctonear(0), Gas::from_tgas(100))
     }
 
     // --- Views ---
 
     pub fn get_dao(&self) -> AccountId {
         self.dao_id.clone()
+    }
+
+    /// What this orbit is bound to, for an orbit or guard checking a swap.
+    pub fn get_binding(&self) -> Binding {
+        Binding { dao_id: self.dao_id.clone(), staking_id: Some(self.staking_id.clone()), token_id: Some(self.token_id.clone()), governance: None }
     }
 
     pub fn get_staking_contract(&self) -> AccountId {
@@ -553,6 +640,7 @@ impl Contract {
                 required,
                 queued_at: None,
                 market,
+                guard_instruction: None,
             },
         );
         self.proposal_count += 1;
@@ -624,6 +712,10 @@ impl Contract {
             Model::Sortition(s) => {
                 let start = now + s.council.voting_delay.0;
                 (start, start + s.council.voting_period.0)
+            }
+            Model::Board(b) => {
+                let start = now + b.council.voting_delay.0;
+                (start, start + b.council.voting_period.0)
             }
             Model::Sowellian(s) => {
                 let start = now + s.approval.voting_delay.0;
@@ -750,6 +842,8 @@ impl Contract {
             required_conviction: U128(p.required),
             core_proposal_id: p.core_id,
             sending: p.sending_since.is_some(),
+            guard: p.guard_instruction.as_ref().map(|(g, _)| g.clone()),
+            guard_instruction: p.guard_instruction.as_ref().map(|(_, n)| *n),
         }
     }
 
@@ -790,6 +884,33 @@ impl Contract {
         self.proposals.get_mut(&id).expect("ERR_NO_PROPOSAL").sending_since = None;
     }
 
+    fn not_sent(&mut self, id: u64, why: &str) -> PromiseOrValue<()> {
+        log!("Proposal {} not sent: {}", id, why);
+        self.end_send(id);
+        PromiseOrValue::Value(())
+    }
+
+    fn mark_executed(&mut self, id: u64) {
+        let proposal = self.proposals.get_mut(&id).expect("ERR_NO_PROPOSAL");
+        proposal.sending_since = None;
+        proposal.executed = true;
+        if let Some(Market::Sowellian(bet)) = &mut proposal.market {
+            bet.measurement_deadline = Some(env::block_timestamp() + bet.measurement_period);
+        }
+    }
+
+    /// Reads the core's policy to find where proposal `id` goes.
+    fn route(&self, id: u64) -> Promise {
+        Promise::new(self.dao_id.clone())
+            .function_call("get_policy", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_VIEW)
+            .then(self.callback().on_route(id))
+    }
+
+    /// A callback into this orbit that passes on the gas left over.
+    fn callback(&self) -> ContractExt {
+        Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).with_unused_gas_weight(1)
+    }
+
     /// Sends `amount` of the DAO's token to `receiver`.
     pub(crate) fn transfer_token(&self, receiver: &AccountId, amount: u128) -> Promise {
         Promise::new(self.token_id.clone()).function_call(
@@ -801,11 +922,25 @@ impl Contract {
     }
 }
 
+/// A board's members: at least one, no repeats, and enough of them for the quorum.
+pub(crate) fn check_board(members: &[AccountId], quorum: u16) {
+    require!(!members.is_empty(), "ERR_CONFIG: a board needs members");
+    require!(usize::from(quorum) <= members.len(), "ERR_CONFIG: quorum larger than the board");
+    for (i, m) in members.iter().enumerate() {
+        require!(!members[i + 1..].contains(m), "ERR_CONFIG: a member is listed twice");
+    }
+}
+
 /// The JSON value the previous call returned, or `None` if it failed or
 /// returned something else. Never panics, so a callback always records the
 /// outcome.
 pub(crate) fn callback_value<T: DeserializeOwned>() -> Option<T> {
-    let bytes = env::promise_result_checked(0, MAX_RESULT_LEN).ok()?;
+    callback_value_at(0)
+}
+
+/// The JSON value the `index`th joined call returned, as `callback_value`.
+pub(crate) fn callback_value_at<T: DeserializeOwned>(index: u64) -> Option<T> {
+    let bytes = env::promise_result_checked(index, MAX_RESULT_LEN).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 

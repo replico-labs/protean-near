@@ -1,9 +1,10 @@
 import { fromUnits } from "../../near/amounts.js";
-import { MODELS } from "../../near/models.js";
+import { MODELS, isCoreBoard } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, parseId, formatNear, tokenInfo, formatDuration, formatTime, nowNs, copyableAccount } from "../helpers.js";
 import { loadProposal, describeProposal, latestProposals } from "../proposals.js";
 import { pendingEditLink } from "../../proposalPages.js";
+import { guardLines } from "./governance.js";
 
 const bps = (b) => `${b / 100}%`;
 
@@ -32,6 +33,8 @@ function rulesLines(model, s, token) {
       return [...council(s.council, s.council_size), `Term: ${formatDuration(s.term_length)}; standing for election needs ${token.format(s.candidacy_threshold)} staked`];
     case "sortition":
       return [...council(s.council, s.council_size), `Term: ${formatDuration(s.term_length)}; joining the pool needs ${token.format(s.eligibility_threshold)} staked`];
+    case "board":
+      return [`A proposal needs ${s.council.quorum} members voting and ${bps(s.council.approval_bps)} in favour`, `Voting: ${formatDuration(s.council.voting_period)}`];
     default:
       return [];
   }
@@ -48,14 +51,23 @@ const daoInfo = {
     const token = await tokenInfo(dao);
     const [governing, staked] = await Promise.all([services.core.governingMembers(dao.daoId), services.staking.totalStaked(dao.stakingId)]);
     const lines = [`*DAO:* \`${dao.daoId}\` (Sputnik)`, `*Model:* ${MODELS[dao.model]}`, `*Token:* ${token.symbol} (\`${token.id}\`) · staked: ${token.format(staked)}`];
-    if (dao.model === "board") {
+    if (isCoreBoard(dao)) {
       lines.push(`*Members:* ${governing.map((g) => `\`${g}\``).join(", ")}`, "Proposals pass with a majority of members.");
     } else {
       const { settings } = services.orbit.modelOf(await services.orbit.getModel(dao.orbitId));
-      lines.push(`*Orbit:* \`${dao.orbitId}\``, "", ...rulesLines(dao.model, settings, token));
-      if (!governing.includes(dao.orbitId)) lines.push("", `⚠️ The DAO is now governed by ${governing.map((g) => `\`${g}\``).join(", ")}. An admin should \`${ctx.cmd("link")}\` it again.`);
+      lines.push(`*Orbit:* \`${dao.orbitId}\``);
+      if (dao.model === "board") lines.push(`*Members:* ${(await services.orbit.getCouncil(dao.orbitId)).map((m) => `\`${m}\``).join(", ")}`);
+      lines.push("", ...rulesLines(dao.model, settings, token));
+      const guarded = dao.guardId && governing.length === 1 && governing[0] === dao.guardId;
+      if (guarded) lines.push("", ...(await guardLines(dao)));
+      else if (!governing.includes(dao.orbitId)) lines.push("", `⚠️ The DAO is now governed by ${governing.map((g) => `\`${g}\``).join(", ")}. An admin should \`${ctx.cmd("link")}\` it again.`);
     }
     if (dao.pendingSwap) lines.push("", `🔀 Proposal #${dao.pendingSwap.proposalId} would switch to *${dao.pendingSwap.model}*.`);
+    if (dao.pendingTokenChange) lines.push("", `🪙 Proposal #${dao.pendingTokenChange.proposalId} would move the DAO to *${dao.pendingTokenChange.symbol}*.`);
+    if (dao.pendingGuard) lines.push("", `🛡 Proposal #${dao.pendingGuard.proposalId} would turn on the guard \`${dao.pendingGuard.guardId}\`.`);
+    if (dao.migration) lines.push("", `🪙 Token change: swap old ${dao.migration.oldTokenId} tokens for the new one with \`${ctx.cmd("migrate")} all\`.`);
+    const supply = await services.staking.getSupply(dao.tokenId);
+    if (supply?.minter === dao.daoId) lines.push(`*Supply:* ${token.format(supply.totalSupply)} in circulation; ${token.format(supply.mintable)} more can ever be minted (cap ${token.format(supply.maxSupply)})`);
     return reply(lines.join("\n"));
   },
 };
@@ -149,9 +161,13 @@ const council = {
   options: [],
   async run(ctx) {
     const dao = requireDao(ctx, this.models);
-    if (dao.model === "board") {
+    if (isCoreBoard(dao)) {
       const members = await services.core.governingMembers(dao.daoId);
       return reply(`*Board members:* ${members.map((m) => `\`${m}\``).join(", ")}`);
+    }
+    if (dao.model === "board") {
+      const members = await services.orbit.getCouncil(dao.orbitId);
+      return reply(`*Board members:* ${members.map((m) => `\`${m}\``).join(", ")}\nThe DAO changes them by proposal: \`${ctx.cmd("setboard")} <quorum> <members...>\``);
     }
     const [members, termEnd] = await Promise.all([services.orbit.getCouncil(dao.orbitId), services.orbit.getTermEnd(dao.orbitId)]);
     const lines = [`*Council:* ${members.length ? members.map((m) => `\`${m}\``).join(", ") : "empty"}`];

@@ -75,6 +75,16 @@ pub enum Model {
     /// whichever prices the DAO's token higher over the trading window,
     /// by time-weighted average, decides.
     DecisionMarkets(DecisionRules),
+    /// Named members propose and vote, one seat one vote, with no term and
+    /// no token. The DAO changes the members by proposal (`set_board`).
+    Board(BoardRules),
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoardRules {
+    /// The quorum is checked against the number of members.
+    pub council: CouncilRules,
 }
 
 #[near(serializers = [borsh, json])]
@@ -168,7 +178,7 @@ impl VoteRules {
 }
 
 impl CouncilRules {
-    fn validate(&self, council_size: u16) {
+    pub(crate) fn validate(&self, council_size: u16) {
         check_bps(self.approval_bps);
         require!(self.quorum > 0 && self.quorum <= council_size, "ERR_CONFIG: council quorum");
         require!(self.voting_period.0 > 0, "ERR_CONFIG: voting_period");
@@ -210,6 +220,8 @@ impl Model {
                 require!(d.trading_period.0 > 0, "ERR_CONFIG: trading_period");
                 require!(d.threshold_bps <= MAX_BPS, "ERR_CONFIG: threshold_bps");
             }
+            // The members come with the orbit; `Contract::new` checks the quorum against them.
+            Model::Board(b) => b.council.validate(u16::MAX),
         }
     }
 
@@ -225,6 +237,7 @@ impl Model {
             Model::Sortition(_) => cfg!(feature = "sortition"),
             Model::Sowellian(_) => cfg!(feature = "sowellian"),
             Model::DecisionMarkets(_) => cfg!(feature = "decision-markets"),
+            Model::Board(_) => cfg!(feature = "board"),
         }
     }
 
@@ -239,6 +252,7 @@ impl Model {
             Model::Sortition(_) => "sortition",
             Model::Sowellian(_) => "sowellian",
             Model::DecisionMarkets(_) => "decisionMarkets",
+            Model::Board(_) => "board",
         }
     }
 
@@ -247,6 +261,7 @@ impl Model {
         match self {
             Model::Delegate(d) => Some(&d.council),
             Model::Sortition(s) => Some(&s.council),
+            Model::Board(b) => Some(&b.council),
             _ => None,
         }
     }

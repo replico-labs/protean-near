@@ -115,13 +115,61 @@ fn policy(members: &[&str]) -> Vec<u8> {
 
 fn claim(staking: &mut Contract, claimant: &str, members: &[&str]) -> bool {
     call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), vec![PromiseResult::Successful(policy(members))]);
-    staking.on_policy(acc(claimant))
+    match staking.on_policy(acc(claimant)) {
+        PromiseOrValue::Value(governs) => governs,
+        PromiseOrValue::Promise(_) => panic!("asked a guard"),
+    }
+}
+
+#[test]
+fn the_orbit_behind_a_guard_becomes_locker() {
+    let mut staking = setup();
+    const GUARD: &str = "guard.mydao.orbits.testnet";
+    call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), vec![PromiseResult::Successful(policy(&[GUARD]))]);
+    assert!(matches!(staking.on_policy(acc(ORBIT)), PromiseOrValue::Promise(_)), "asks the guard");
+    let answer = |governance: &str| vec![PromiseResult::Successful(serde_json::to_vec(governance).unwrap())];
+    call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), answer("other.testnet"));
+    assert!(!staking.on_guard_governance(acc(ORBIT)));
+    call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), answer(ORBIT));
+    assert!(staking.on_guard_governance(acc(ORBIT)));
+    assert_eq!(staking.get_locker(), Some(acc(ORBIT)));
+}
+
+#[test]
+fn a_migrator_stakes_for_someone_registered() {
+    let mut staking = setup();
+    at(TOKEN, SEC);
+    let _ = staking.ft_on_transfer(acc("migrator.testnet"), U128(70), r#"{"stake_for":"bob.testnet"}"#.into());
+    assert_eq!(staking.get_member(acc("bob.testnet")).unwrap().stake.0, 70);
+    assert!(staking.get_member(acc("migrator.testnet")).is_none());
+}
+
+#[test]
+#[should_panic(expected = "ERR_NOT_REGISTERED")]
+fn staking_for_an_unregistered_account_is_refused() {
+    let mut staking = setup();
+    at(TOKEN, SEC);
+    let _ = staking.ft_on_transfer(acc("migrator.testnet"), U128(70), r#"{"stake_for":"carol.testnet"}"#.into());
+}
+
+#[test]
+#[should_panic(expected = "ERR_INVALID_MESSAGE")]
+fn other_messages_are_refused() {
+    let mut staking = setup();
+    at(TOKEN, SEC);
+    let _ = staking.ft_on_transfer(acc("alice.testnet"), U128(70), "stake".into());
 }
 
 #[test]
 fn only_the_governing_orbit_becomes_locker() {
     let mut staking = setup();
-    assert!(!claim(&mut staking, "stranger.testnet", &[ORBIT]));
+    assert!(!claim(&mut staking, "stranger.testnet", &["a.testnet", "b.testnet"]));
+    // With one member that isn't the claimant, the vault asks it (as a guard);
+    // an orbit has no get_governance, so the call fails.
+    call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), vec![PromiseResult::Successful(policy(&[ORBIT]))]);
+    assert!(matches!(staking.on_policy(acc("stranger.testnet")), PromiseOrValue::Promise(_)));
+    call("staking.mydao.orbits.testnet", SEC, NearToken::from_near(0), vec![PromiseResult::Failed]);
+    assert!(!staking.on_guard_governance(acc("stranger.testnet")));
     assert_eq!(staking.get_locker(), None);
     assert!(claim(&mut staking, ORBIT, &[ORBIT]));
     assert_eq!(staking.get_locker(), Some(acc(ORBIT)));

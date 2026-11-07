@@ -1669,6 +1669,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-board"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit",
+]
+
+[[package]]
 name = "orbit-common"
 version = "0.1.0"
 dependencies = [
@@ -1700,11 +1708,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-guard"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+ "orbit-common",
+]
+
+[[package]]
 name = "orbit-liquid"
 version = "0.1.0"
 dependencies = [
  "near-sdk",
  "orbit",
+]
+
+[[package]]
+name = "orbit-migrator"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 import { NEAR_DECIMALS, fromUnits } from "../../near/amounts.js";
 import * as kinds from "../../near/kinds.js";
-import { executionHorizonNs } from "../../near/models.js";
+import { executionHorizonNs, isCoreBoard } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, userAccount, parseAmount, parseId, tokenInfo, formatTime, nowNs } from "../helpers.js";
 import { makeProposal } from "./proposing.js";
@@ -27,7 +27,7 @@ const fmtAsset = (asset, units) => `${fromUnits(BigInt(units), asset.decimals, a
 
 /** How long a proposal made now may still execute in this chat's DAO, or a UserError if its model has no bound. */
 async function horizonNs(dao) {
-  if (dao.model === "board") return executionHorizonNs("board", null, BigInt((await services.core.getPolicy(dao.daoId)).proposal_period));
+  if (isCoreBoard(dao)) return executionHorizonNs("board", null, BigInt((await services.core.getPolicy(dao.daoId)).proposal_period));
   const { name, settings } = services.orbit.modelOf(await services.orbit.getModel(dao.orbitId));
   const horizon = executionHorizonNs(name, settings);
   if (horizon === null) throw new UserError(`NEAR Intents quotes expire, and a ${name} proposal has no fixed end, so it can't fund one safely.`);

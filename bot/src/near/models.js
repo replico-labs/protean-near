@@ -9,7 +9,7 @@ const MIN = 60_000_000_000n; // one minute, in nanoseconds
 const minutes = (name, fallback) => BigInt(process.env[name] ?? fallback) * MIN;
 
 export const MODELS = {
-  board: "Board: named members approve directly on the DAO (Sputnik's multisig), no token voting",
+  board: "Board: named members propose and vote, one seat one vote, no token voting",
   tokenWeighted: "Token-weighted: one staked token, one vote",
   quadratic: "Quadratic: voting weight is the square root of stake",
   liquid: "Liquid: vote directly, or delegate your vote to someone",
@@ -32,13 +32,21 @@ export const MODULE_CONTRACT = {
   sortition: "orbit_sortition",
   sowellian: "orbit_sowellian",
   decisionMarkets: "orbit_decision_markets",
+  board: "orbit_board",
 };
 
 /** Short account prefixes for each model's orbit, e.g. "tw.ark.orbits.testnet". */
-export const ORBIT_PREFIX = { tokenWeighted: "tw", quadratic: "qv", liquid: "lq", optimistic: "op", conviction: "cv", delegate: "dg", sortition: "st", sowellian: "sw", decisionMarkets: "dm" };
+export const ORBIT_PREFIX = { tokenWeighted: "tw", quadratic: "qv", liquid: "lq", optimistic: "op", conviction: "cv", delegate: "dg", sortition: "st", sowellian: "sw", decisionMarkets: "dm", board: "bd" };
 
 export const isCouncilModel = (model) => model === "delegate" || model === "sortition";
 export const isStakeModel = (model) => model !== "board" && !isCouncilModel(model);
+/** Models whose members are named when the orbit is created: a board, or a starting council. */
+export const takesMembers = (model) => model === "board" || isCouncilModel(model);
+/**
+ * A board DAO from before board orbits: its members approve on the Sputnik
+ * core itself, with no orbit. New board DAOs run a board orbit.
+ */
+export const isCoreBoard = (link) => link?.model === "board" && !link.orbitId;
 
 /** How long a Sowellian proposal's outcome is measured after it executes. */
 export const measurementPeriod = () => String(minutes("MEASUREMENT_MINUTES", 60));
@@ -141,6 +149,9 @@ export function modelConfig(name, supply, councilSize = 3) {
           max_oracle_staleness: String(minutes("ORACLE_STALENESS_MINUTES", 60)),
         },
       };
+    case "board":
+      // A majority of the members must vote, and a majority of those approve.
+      return { Board: { council: { ...councilRules(councilSize), quorum: Math.floor(councilSize / 2) + 1 } } };
     case "decisionMarkets":
       return {
         DecisionMarkets: {
@@ -171,15 +182,16 @@ export function boardPolicy(members) {
  * The longest a proposal made now can take to become unexecutable under
  * model `name` with `settings` (from the orbit), in nanoseconds: voting,
  * timelock and the execution window. Null when there's no bound
- * (conviction and decision markets wait on support or seeding). A board
- * DAO's proposals last Sputnik's proposal period, `boardPeriod`.
+ * (conviction and decision markets wait on support or seeding). A core
+ * board's proposals last Sputnik's proposal period, `boardPeriod`.
  */
 export function executionHorizonNs(name, settings, boardPeriod = 7n * 24n * 60n * MIN) {
   const n = (v) => BigInt(v ?? 0);
   const window = (r) => n(r.voting_delay) + n(r.voting_period) + n(r.timelock) + n(r.execution_period);
   switch (name) {
     case "board":
-      return BigInt(boardPeriod);
+      // A board orbit has council rules; a core board, Sputnik's proposal period.
+      return settings?.council ? window(settings.council) : BigInt(boardPeriod);
     case "tokenWeighted":
     case "quadratic":
     case "liquid":
@@ -202,7 +214,7 @@ export function executionHorizonNs(name, settings, boardPeriod = 7n * 24n * 60n 
  * doesn't say.
  */
 export function executionPeriodNs(name, settings) {
-  const rules = { optimistic: settings?.rules, delegate: settings?.council, sortition: settings?.council, sowellian: settings?.approval }[name] ?? settings;
+  const rules = { optimistic: settings?.rules, delegate: settings?.council, sortition: settings?.council, board: settings?.council, sowellian: settings?.approval }[name] ?? settings;
   return rules?.execution_period ? BigInt(rules.execution_period) : null;
 }
 

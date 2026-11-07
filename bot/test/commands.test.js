@@ -55,6 +55,19 @@ beforeEach(() => {
         calls.push(["createOrbit", args]);
         return `qv.${BASE}`;
       },
+      createGuard: async (args) => {
+        calls.push(["createGuard", args]);
+        state.guards = { ...state.guards, [`guard.${BASE}`]: { governance: args.governance, signers: args.signers, threshold: args.threshold, tenure_end: "0" } };
+        return `guard.${BASE}`;
+      },
+      createTokenChange: async (args) => {
+        calls.push(["createTokenChange", args]);
+        const ids = { tokenId: `token2.${BASE}`, stakingId: `staking2.${BASE}`, migratorId: `migrator2.${BASE}`, orbitId: `tw2.${BASE}` };
+        state.models[ids.orbitId] = modelSettings.tokenWeighted;
+        state.tokens = { ...state.tokens, [ids.orbitId]: ids.tokenId };
+        state.vaults = { ...state.vaults, [ids.orbitId]: ids.stakingId };
+        return { ...ids, supply: 2_000_000n * E18 };
+      },
     },
     core: {
       governingMembers: async (dao) => {
@@ -78,16 +91,21 @@ beforeEach(() => {
       },
       actProposal: async (acct, dao, id, action) => {
         calls.push(["actProposal", id, action]);
-        if (action === "VoteApprove") state.coreProposals[id].status = "Approved";
+        if (action === "VoteApprove") {
+          state.coreProposals[id].status = "Approved";
+          const target = state.coreProposals[id].kind?.ChangePolicyAddOrUpdateRole?.role?.kind?.Group?.[0];
+          if (target) state.governing[dao] = [target];
+        }
       },
     },
     staking: {
       tokenMetadata: async (id) => {
-        if (!id.startsWith("token.")) throw new Error("not a token");
-        return { symbol: "ARK", decimals: 18 };
+        if (!/^token\d*\./.test(id)) throw new Error("not a token");
+        return { symbol: id.startsWith("token.") ? "ARK" : "NOVA", decimals: 18 };
       },
       tokenBalance: async () => state.balance,
       totalSupply: async () => 1_000_000n * E18,
+      getSupply: async () => state.supply ?? null,
       totalStaked: async () => 400n * E18,
       getMember: async () => ({ stake: 40n * E18, locked: 0n, available: 40n * E18, storage: 10n ** 22n }),
       stake: record("stake"),
@@ -96,8 +114,29 @@ beforeEach(() => {
         if (amount > 40n * E18) throw chainError("ERR_NOT_ENOUGH_UNLOCKED_STAKE");
       },
       sendToken: record("sendToken"),
+      migrationQuote: async (m, amount) => amount * 2n,
+      migrate: async (acct, ids, amount) => calls.push(["migrate", ids, amount]),
+    },
+    guard: {
+      getConfig: async (id) => state.guards?.[id] ?? Promise.reject(new Error("not a guard")),
+      getInstruction: async (id, n) => state.instructions?.[n] ?? null,
+      getInstructionCount: async () => state.instructions?.length ?? 0,
+      getInstructions: async (id, from, limit) => (state.instructions ?? []).slice(from, from + limit),
+      confirm: async (acct, guard, n) => {
+        calls.push(["confirm", guard, n]);
+        state.instructions[n].confirmations += 1;
+        if (state.instructions[n].confirmations >= state.guards[guard].threshold) {
+          state.instructions[n].state = "Executed";
+          state.instructions[n].onRun?.();
+        }
+      },
     },
     venues: { wrapNear: "wrap.testnet" },
+    versions: {
+      orbitKnowsGuards: async (id) => !(state.oldOrbits ?? []).includes(id),
+      isOldVault: async (id) => (state.oldVaults ?? []).includes(id),
+      publishedTokenTakesCaps: () => !state.oldTokenCode,
+    },
     hyperliquid: {
       ...realHyperliquid,
       account: async () => ({ accountValue: "120", withdrawable: "50", positions: [{ coin: "ETH", size: "0.1", value: "350", entry: "3300", pnl: "20", roe: "0.3", leverage: 5, liquidation: "2900" }] }),
@@ -189,8 +228,8 @@ beforeEach(() => {
         if (!state.models[orbit]) throw new Error("no contract");
         return DAO;
       },
-      getStakingContract: async () => STAKING,
-      getToken: async () => TOKEN,
+      getStakingContract: async (o) => state.vaults?.[o] ?? STAKING,
+      getToken: async (o) => state.tokens?.[o] ?? TOKEN,
       getProposalCount: async () => state.proposals.length,
       getProposals: async (o, from, limit) => state.proposals.slice(from, from + limit),
       getProposal: async (o, id) => state.proposals[id] ?? null,
@@ -261,7 +300,7 @@ test("createdao deploys with the caller as holder and links the chat", async () 
   const r = await runCommand("createdao", ctx(["ark", "ark", "1000000", "quadratic"]));
   assert.match(r.text, /is live, with \*quadratic\* governance/);
   const [, args] = calls[0];
-  assert.deepEqual({ ...args, onStep: undefined }, { name: "ark", symbol: "ARK", supply: 1_000_000n * E18, model: "quadratic", council: [], holder: ME, onStep: undefined });
+  assert.deepEqual({ ...args, onStep: undefined }, { name: "ark", symbol: "ARK", supply: 1_000_000n * E18, cap: null, model: "quadratic", council: [], holder: ME, onStep: undefined });
   assert.equal(links["telegram:-100"].model, "quadratic");
 });
 
@@ -789,4 +828,119 @@ test("hlrevoke replaces the agent with an address nobody holds; hlsend checks wh
   const shown = (await runCommand("hyperliquid", ctx([]))).text;
   assert.match(shown, /⚠️ Another agent can trade this account outside the DAO's limits: `0x1{40}` \("desk"\)\. Remove it: `\/hlrevoke desk`/);
   assert.equal(shown.match(/⚠️/g).length, 1, "the bot's own agent isn't flagged");
+});
+
+// --- Governance: mint, token change, board orbit, guard ---
+
+test("mint needs a capped token minted by the DAO, and stays under the cap", async () => {
+  linked();
+  assert.match((await runCommand("mint", ctx(["10", "me", "grants"]))).text, /fixed supply/);
+  state.supply = { totalSupply: 900n * E18, totalMinted: 1000n * E18, maxSupply: 1500n * E18, mintable: 500n * E18, minter: DAO };
+  assert.match((await runCommand("mint", ctx(["501", "me", "grants"]))).text, /Only 500 ARK more can ever be minted .*burned tokens included/);
+  const r = await runCommand("mint", ctx(["500", "bob.testnet", "grants"]));
+  assert.match(r.text, /Mint 500 ARK to bob\.testnet/);
+  const [, , , kind] = calls.find(([name]) => name === "propose");
+  assert.equal(kind.FunctionCall.receiver_id, TOKEN);
+});
+
+test("createdao takes a cap after the supply", async () => {
+  await runCommand("createdao", ctx(["ark", "ARK", "1000", "5000", "quadratic"]));
+  assert.equal(calls[0][1].cap, 5000n * E18);
+  assert.equal(calls[0][1].model, "quadratic");
+  delete links["telegram:-100"];
+  assert.match((await runCommand("createdao", ctx(["ark", "ARK", "1000", "999"]))).text, /can't be below the initial supply/);
+});
+
+test("a token change prepares everything, then the chat follows the new token and holders migrate", async () => {
+  linked();
+  const r = await runCommand("changetoken", ctx(["nova", "2", "quadratic"]));
+  const [, args] = calls.find(([name]) => name === "createTokenChange");
+  assert.deepEqual([args.symbol, args.numerator, args.denominator, args.cap, args.model, args.oldTokenId], ["NOVA", 2n, 1n, null, "quadratic", TOKEN]);
+  assert.match(r.text, /Proposed moving to \*NOVA\*.*Each ARK will swap for 2 NOVA/s);
+  assert.equal(state.proposals[0].kind.ChangePolicyAddOrUpdateRole.role.kind.Group[0], `tw2.${BASE}`);
+
+  state.proposals[0].state = "Succeeded";
+  const done = await runCommand("execute", ctx(["0"]));
+  assert.match(done.text, /token is now \*NOVA\*/);
+  const link = links["telegram:-100"];
+  assert.deepEqual([link.orbitId, link.tokenId, link.stakingId], [`tw2.${BASE}`, `token2.${BASE}`, `staking2.${BASE}`]);
+  assert.deepEqual(link.migration, { oldTokenId: TOKEN, oldStakingId: STAKING, migratorId: `migrator2.${BASE}` });
+
+  calls = [];
+  const m = await runCommand("migrate", ctx(["all"]));
+  assert.deepEqual(calls[0], ["unstake", 40n * E18], "the old stake comes out first");
+  assert.deepEqual(calls[1], ["migrate", { oldTokenId: TOKEN, newTokenId: `token2.${BASE}`, migratorId: `migrator2.${BASE}`, stakeIn: `staking2.${BASE}` }, 100n * E18]);
+  assert.match(m.text, /Swapped your ARK \(your old stake included\) for 200 NOVA, staked in the new vault/);
+});
+
+test("a core board moves to a board orbit; a board orbit sets its members by proposal", async () => {
+  linked("board");
+  state.models[`qv.${BASE}`] = { Board: { council: { quorum: 2 } } };
+  await runCommand("switchmodel", ctx(["board", "me", "bob.testnet", "carol.testnet"]));
+  assert.deepEqual(calls[0][1].council, [ME, "bob.testnet", "carol.testnet"]);
+  assert.equal(calls[1][0], "addProposal", "proposed on the core itself");
+  await runCommand("vote", ctx(["0", "for"]));
+  assert.equal(links["telegram:-100"].orbitId, `qv.${BASE}`);
+  assert.equal(links["telegram:-100"].model, "board");
+
+  const r = await runCommand("setboard", ctx(["2", "me", "dave.testnet"]));
+  assert.match(r.text, /Set the board to tg42\.orbits\.testnet, dave\.testnet, 2 to vote/);
+  assert.match((await runCommand("setboard", ctx(["3", "me"]))).text, /between 1 and the number of members/);
+});
+
+test("a guard: turned on by proposal, then passed proposals wait for its signers", async () => {
+  linked();
+  const on = await runCommand("guard", ctx(["on", "2", "30d", "me", "bob.testnet", "carol.testnet"]));
+  const [, args] = calls.find(([name]) => name === "createGuard");
+  assert.deepEqual([args.governance, args.threshold, args.tenureNs], [ORBIT, 2, 30n * 86_400n * 10n ** 9n]);
+  assert.match(on.text, /Proposed a guard: 2 of 3 signers/);
+  state.proposals[0].state = "Succeeded";
+  const done = await runCommand("execute", ctx(["0"]));
+  assert.match(done.text, /A guard \(`guard\.ark\.orbits\.testnet`\) now confirms what passes/);
+  assert.equal(links["telegram:-100"].guardId, `guard.${BASE}`);
+  assert.equal(links["telegram:-100"].orbitId, ORBIT, "the same orbit carries on");
+
+  // Switching model behind the guard moves the guard, once signers confirm.
+  state.models[`qv.${BASE}`] = { Quadratic: {} };
+  await runCommand("switchmodel", ctx(["quadratic"]));
+  const kind = state.proposals[1].kind;
+  assert.equal(kind.FunctionCall.receiver_id, `guard.${BASE}`);
+  assert.equal(kind.FunctionCall.actions[0].method_name, "set_governance");
+  state.instructions = [{ id: 0, description: "Switch governance to quadratic", state: "Pending", confirmations: 0, onRun: () => (state.guards[`guard.${BASE}`].governance = `qv.${BASE}`) }];
+  assert.match((await runCommand("confirm", ctx(["0"]))).text, /Confirmed instruction #0/);
+  assert.equal(links["telegram:-100"].orbitId, ORBIT, "not yet: 1 of 2");
+  const ran = await runCommand("confirm", ctx(["0"]));
+  assert.match(ran.text, /it ran on the DAO.*now runs \*quadratic\* governance/s);
+  assert.deepEqual([links["telegram:-100"].orbitId, links["telegram:-100"].guardId], [`qv.${BASE}`, `guard.${BASE}`]);
+});
+
+test("guard commands explain what's missing", async () => {
+  linked();
+  assert.match((await runCommand("guard", ctx([]))).text, /has no guard/);
+  assert.match((await runCommand("guard", ctx(["on", "4", "30d", "me"]))).text, /between 1 and the number of signers/);
+  assert.match((await runCommand("guard", ctx(["on", "1", "soon", "me"]))).text, /like 30d/);
+  assert.match((await runCommand("confirm", ctx(["0"]))).text, /has no guard/);
+  linked("board");
+  assert.match((await runCommand("guard", ctx(["on", "1", "1d", "me"]))).text, /board orbit first/);
+});
+
+test("contracts from before guards: an old orbit upgrades before a guard, and old code refuses what it can't do", async () => {
+  linked();
+  state.oldOrbits = [ORBIT];
+  assert.match((await runCommand("guard", ctx(["on", "1", "30d", "me"]))).text, /orbit is from before guards.*switchmodel tokenWeighted/s);
+  assert.ok(!calls.some(([name]) => name === "createGuard"), "no guard is made for it");
+  // The same model moves the DAO onto today's orbit.
+  assert.match((await runCommand("switchmodel", ctx(["tokenWeighted"]))).text, /Proposed switching to \*tokenWeighted\*/);
+  state.oldOrbits = [];
+  assert.match((await runCommand("switchmodel", ctx(["tokenWeighted"]))).text, /already runs/);
+
+  // Behind a guard, conviction can't take an old vault's locker.
+  links["telegram:-100"].guardId = `guard.${BASE}`;
+  state.oldVaults = [STAKING];
+  assert.match((await runCommand("switchmodel", ctx(["conviction"]))).text, /vault is from before guards/);
+
+  delete links["telegram:-100"];
+  state.oldTokenCode = true;
+  assert.match((await runCommand("createdao", ctx(["ark", "ARK", "1000", "5000"]))).text, /Capped tokens aren't published/);
+  assert.ok(!calls.some(([name]) => name === "createDao"));
 });

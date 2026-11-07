@@ -58,7 +58,8 @@ test("buttons: decision markets trade while open, redeem after; other models kee
     "ask amount split 2 near", "ask amount split 2 token", "proposal 2",
   ]);
   assert.deepEqual(dm("Succeeded", { opened_at: "1", deadline: "900" }), ["redeem 2", "execute 2", "proposal 2"]);
-  assert.deepEqual(cmds(proposalButtons("board", 1, "InProgress")), ["vote 1 for", "vote 1 against", "proposal 1"]);
+  assert.deepEqual(cmds(proposalButtons("coreBoard", 1, "InProgress")), ["vote 1 for", "vote 1 against", "proposal 1"]);
+  assert.deepEqual(cmds(proposalButtons("board", 1, "Active")), ["vote 1 for", "vote 1 against", "vote 1 abstain", "proposal 1"], "a board orbit votes like a council");
   assert.deepEqual(cmds(proposalButtons("conviction", 1, "Active")), ["support 1", "queue 1", "proposal 1"]);
   assert.deepEqual(cmds(proposalButtons("optimistic", 1, "ChallengeWindow")), ["challenge 1", "proposal 1"]);
   // Every button fits Telegram's 64 bytes, decodes, and is allowed.
@@ -142,4 +143,30 @@ test("notices: new proposals from elsewhere, model steps, each with its buttons;
   assert.deepEqual(posted[2].cmds, ["claimposition 0", "proposal 0"]);
   await scan(6000n);
   assert.equal(posted.length, 3, "nothing twice");
+});
+
+test("notices: a guard's new instructions ask its signers, and its outcomes are posted once", async () => {
+  const { scanGuard } = await import("../src/platforms/notifier.js");
+  const GUARD = "guard.ark.protean.testnet";
+  links["telegram:-100"] = { ...links["telegram:-100"], guardId: GUARD };
+  const instructions = [{ id: 0, description: "pay maya", state: "Pending", confirmations: 0 }];
+  services.guard = {
+    getInstructionCount: async () => instructions.length,
+    getInstructions: async (g, from, limit) => instructions.slice(from, from + limit),
+    getConfig: async () => ({ threshold: 2 }),
+  };
+  const posted = [];
+  const scan = () => scanGuard("telegram", "-100", links["telegram:-100"], (c, text, buttons) => posted.push({ text, cmds: cmds(buttons) }));
+  await scan();
+  assert.equal(posted.length, 0, "the first look only records");
+  instructions.push({ id: 1, description: "switch to quadratic", state: "Pending", confirmations: 1 });
+  instructions[0].state = "Executed";
+  await scan();
+  assert.deepEqual(posted.map((p) => p.text), [
+    "▶️ Guard instruction *#0* — pay maya: confirmed, and it ran on the DAO.",
+    "🛡 Guard instruction *#1* — switch to quadratic: it needs 1 signer to confirm before it runs.",
+  ]);
+  assert.deepEqual(posted[1].cmds, ["confirm 1", "reject 1"]);
+  await scan();
+  assert.equal(posted.length, 2, "nothing twice");
 });

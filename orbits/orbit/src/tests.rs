@@ -100,6 +100,38 @@ fn state(chain: &Chain, o: &Contract, id: u64) -> State {
     o.get_proposal(id).unwrap().state
 }
 
+/// Delivers the core's policy, whose governance members are `members`, to
+/// the routing step of `execute`.
+fn route(chain: &Chain, o: &mut Contract, id: u64, members: &[&str]) -> PromiseOrValue<()> {
+    let policy = serde_json::json!({ "roles": [{ "name": "governance", "kind": { "Group": members } }] });
+    chain.callback(Some(policy.to_string()));
+    o.on_route(id)
+}
+
+fn receivers() -> Vec<(String, String)> {
+    get_created_receipts()
+        .iter()
+        .flat_map(|r| {
+            r.actions.iter().filter_map(move |a| match a {
+                near_sdk::mock::MockAction::FunctionCallWeight { method_name, .. } => {
+                    Some((r.receiver_id.to_string(), String::from_utf8(method_name.clone()).unwrap()))
+                }
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+/// A token-weighted proposal of `kind` that passed, with the clock past its timelock.
+fn passed(kind: &str) -> (Chain, Contract, u64) {
+    let (mut chain, mut o) = orbit(Model::TokenWeighted(rules()), None);
+    let id = propose(&chain, &mut o, "alice.testnet", kind);
+    chain.now += 2 * HOUR;
+    vote(&chain, &mut o, id, "alice.testnet", Choice::For, 50, 100);
+    chain.now += 26 * HOUR;
+    (chain, o, id)
+}
+
 // --- Token-weighted ---
 
 #[test]
@@ -187,6 +219,7 @@ fn execute_respects_timelock_and_window() {
     chain.call("anyone.testnet");
     let _ = o.execute(id);
     assert!(o.get_proposal(id).unwrap().sending);
+    let _ = route(&chain, &mut o, id, &[ORBIT]);
     chain.callback(Some("4".into()));
     let _ = o.on_added(id);
     chain.callback(Some(String::new()));
@@ -207,6 +240,7 @@ fn approving_on_the_core_gives_it_the_leftover_gas() {
     chain.now += 26 * HOUR;
     chain.call("anyone.testnet");
     let _ = o.execute(id);
+    let _ = route(&chain, &mut o, id, &[ORBIT]);
     chain.callback(Some("4".into()));
     let _ = o.on_added(id);
     let weights: Vec<(String, String, u64)> = get_created_receipts()
@@ -247,23 +281,140 @@ fn only_the_proposer_cancels() {
 
 #[test]
 fn swap_goes_only_to_an_orbit_bound_to_this_core() {
-    let (mut chain, mut o) = orbit(Model::TokenWeighted(rules()), None);
-    let kind = orbit_common::swap_kind(&acc("q.mydao.orbits.testnet")).to_string();
-    let id = propose(&chain, &mut o, "alice.testnet", &kind);
-    chain.now += 2 * HOUR;
-    vote(&chain, &mut o, id, "alice.testnet", Choice::For, 50, 100);
-    chain.now += 26 * HOUR;
+    const NEW: &str = "q.mydao.orbits.testnet";
+    let (chain, mut o, id) = passed(&orbit_common::swap_kind(&acc(NEW)).to_string());
+    let binding = |dao: &str| Some(format!(r#"{{"dao_id":"{dao}","staking_id":"{STAKING}","token_id":"{TOKEN}","governance":null}}"#));
     chain.call("anyone.testnet");
     let _ = o.execute(id);
-    chain.callback(Some(r#""other.sputnikv2.testnet""#.into()));
-    let _ = o.on_swap_checked(id);
+    assert!(receivers().contains(&(NEW.into(), "get_binding".into())));
+    chain.callback(binding("other.sputnikv2.testnet"));
+    let _ = o.on_binding(id);
     assert!(get_logs()[0].contains("not sent"));
     assert!(!o.get_proposal(id).unwrap().sending);
+
+    // Bound to this core: its vault is checked next.
     chain.call("anyone.testnet");
     let _ = o.execute(id);
-    chain.callback(Some(format!("\"{DAO}\"")));
-    let _ = o.on_swap_checked(id);
-    assert_eq!(get_created_receipts().len(), 2, "add_proposal, then on_added");
+    chain.callback(binding(DAO));
+    let _ = o.on_binding(id);
+    let vault = |dao: &str, token: &str| {
+        vec![PromiseResult::Successful(format!("\"{dao}\"").into_bytes()), PromiseResult::Successful(format!("\"{token}\"").into_bytes())]
+    };
+    chain.call_with(ORBIT, NearToken::from_near(0), vault(DAO, "other-token.testnet"));
+    let _ = o.on_vault(id, acc(TOKEN));
+    assert!(get_logs()[0].contains("holds another token"));
+
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    chain.call_with(ORBIT, NearToken::from_near(0), vault(DAO, TOKEN));
+    let _ = o.on_vault(id, acc(TOKEN));
+    assert!(receivers().contains(&(DAO.into(), "get_policy".into())), "then routed");
+    let _ = route(&chain, &mut o, id, &[ORBIT]);
+    assert!(receivers().contains(&(DAO.into(), "add_proposal".into())));
+}
+
+#[test]
+fn a_token_change_swaps_to_an_orbit_with_its_own_vault_and_token() {
+    const NEW: &str = "q.mydao.orbits.testnet";
+    let (chain, mut o, id) = passed(&orbit_common::swap_kind(&acc(NEW)).to_string());
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    chain.callback(Some(format!(r#"{{"dao_id":"{DAO}","staking_id":"staking2.testnet","token_id":"nova.testnet","governance":null}}"#)));
+    let _ = o.on_binding(id);
+    assert!(receivers().contains(&("staking2.testnet".into(), "get_token".into())));
+    let answers = vec![PromiseResult::Successful(format!("\"{DAO}\"").into_bytes()), PromiseResult::Successful(br#""nova.testnet""#.to_vec())];
+    chain.call_with(ORBIT, NearToken::from_near(0), answers);
+    let _ = o.on_vault(id, acc("nova.testnet"));
+    assert!(receivers().contains(&(DAO.into(), "get_policy".into())));
+}
+
+#[test]
+fn a_guard_is_accepted_only_if_it_answers_to_this_orbit() {
+    const GUARD: &str = "guard.mydao.orbits.testnet";
+    let (chain, mut o, id) = passed(&orbit_common::swap_kind(&acc(GUARD)).to_string());
+    let binding = |governance: &str| Some(format!(r#"{{"dao_id":"{DAO}","staking_id":null,"token_id":null,"governance":"{governance}"}}"#));
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    chain.callback(binding("other-orbit.testnet"));
+    let _ = o.on_binding(id);
+    assert!(get_logs()[0].contains("not sent"));
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    chain.callback(binding(ORBIT));
+    let _ = o.on_binding(id);
+    assert!(receivers().contains(&(DAO.into(), "get_policy".into())));
+}
+
+#[test]
+fn behind_a_guard_a_passed_proposal_becomes_an_instruction() {
+    const GUARD: &str = "guard.mydao.orbits.testnet";
+    let (chain, mut o, id) = passed(TRANSFER);
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    let _ = route(&chain, &mut o, id, &[GUARD]);
+    assert!(receivers().contains(&(GUARD.into(), "get_governance".into())));
+    // A guard for someone else: not sent.
+    chain.callback(Some(r#""other-orbit.testnet""#.into()));
+    let _ = o.on_guard(id, acc(GUARD));
+    assert!(get_logs()[0].contains("not sent"));
+
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    let _ = route(&chain, &mut o, id, &[GUARD]);
+    chain.callback(Some(format!("\"{ORBIT}\"")));
+    let _ = o.on_guard(id, acc(GUARD));
+    assert!(get_created_receipts().iter().any(|r| r.receiver_id.as_str() == GUARD), "propose_instruction");
+    chain.callback(Some("3".into()));
+    assert!(o.on_sent_to_guard(id, acc(GUARD)));
+    let view = o.get_proposal(id).unwrap();
+    assert_eq!((view.state, view.guard, view.guard_instruction), (State::Executed, Some(acc(GUARD)), Some(3)));
+}
+
+#[test]
+fn an_orbit_that_no_longer_governs_sends_nothing() {
+    let (chain, mut o, id) = passed(TRANSFER);
+    chain.call("anyone.testnet");
+    let _ = o.execute(id);
+    let _ = route(&chain, &mut o, id, &["a.testnet", "b.testnet"]);
+    assert!(get_logs()[0].contains("doesn't govern"));
+    assert!(!o.get_proposal(id).unwrap().sending, "can be retried");
+}
+
+// --- Board ---
+
+fn board() -> Model {
+    Model::Board(BoardRules { council: council_rules() })
+}
+
+#[test]
+fn a_board_proposes_and_votes_one_seat_one_vote() {
+    let (mut chain, mut o) = orbit(board(), Some(vec!["a.testnet", "b.testnet", "c.testnet"]));
+    let id = propose(&chain, &mut o, "a.testnet", TRANSFER);
+    chain.call("a.testnet");
+    let _ = o.vote(id, Choice::For);
+    chain.call("b.testnet");
+    let _ = o.vote(id, Choice::For);
+    chain.now += 25 * HOUR;
+    assert_eq!(state(&chain, &o, id), State::Succeeded);
+    chain.pay("stranger.testnet", NearToken::from_millinear(100));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| o.propose("x".into(), TRANSFER.into()))).is_err());
+}
+
+#[test]
+fn only_the_dao_changes_the_board() {
+    let (chain, mut o) = orbit(board(), Some(vec!["a.testnet", "b.testnet"]));
+    chain.call("a.testnet");
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| o.set_board(vec![acc("a.testnet")], 1))).is_err());
+    chain.call(DAO);
+    o.set_board(vec![acc("d.testnet"), acc("e.testnet"), acc("f.testnet")], 2);
+    assert_eq!(o.get_council(), vec![acc("d.testnet"), acc("e.testnet"), acc("f.testnet")]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| o.set_board(vec![acc("d.testnet")], 2))).is_err(), "quorum above the board");
+}
+
+#[test]
+#[should_panic(expected = "ERR_CONFIG: a board needs members")]
+fn a_board_needs_members() {
+    orbit(board(), None);
 }
 
 #[test]
@@ -611,6 +762,7 @@ fn executed_bet(criteria: sowellian::Criteria) -> (Chain, Contract, u64) {
     assert_eq!(state(&chain, &o, id), State::Succeeded);
     chain.call("anyone.testnet");
     let _ = o.execute(id);
+    let _ = route(&chain, &mut o, id, &[ORBIT]);
     chain.callback(Some("0".into()));
     let _ = o.on_added(id);
     chain.callback(Some(String::new()));

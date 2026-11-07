@@ -5,7 +5,8 @@ DAO with one command, holds a treasury on NEAR, and decides what to do with
 it by proposal: pay people, swap and stake its funds, buy tokens on other
 chains, supply to Aave on Base, or trade perps on Hyperliquid through an
 appointed agent. When the group's needs change, it switches its governance
-model by proposal, without moving its treasury.
+model, its token, or puts a council of signers in front of its treasury,
+each by one proposal, without moving its treasury.
 
 This repository holds both halves:
 
@@ -19,6 +20,45 @@ This repository holds both halves:
 > on Hyperliquid testnet, both through Chain Signatures. NEAR Intents exists
 > only on mainnet, so it's tested against its contracts on a local NEAR node
 > (`docs/sandbox.md`), along with every governance model and the full flow.
+
+## Built for NEAR HACKATHON
+
+Protean on NEAR was built for [NEAR HACKATHON](https://nearhackathon.com),
+from 2026-10-20 (the first commit, after the announcement on 2026-10-19) to
+the end of development on 2026-11-14. Everything in this repository was
+written in that window; the history is in the commits, and the tag
+`hackathon-submission` marks what was submitted.
+
+**What existed before (baseline, not judged).** Protean already runs on EVM
+chains: Solidity contracts and a Telegram bot, in
+[Spaces](https://github.com/replico-labs/Spaces). From it this project took:
+
+- the governance models' rules (quorum and approval, timelocks, quadratic
+  weights, delegation chains, optimistic challenges, conviction growth,
+  elections and recalls, sortition, Sowellian bonds, decision markets),
+  rewritten here in Rust for NEAR;
+- the chat layer's shape: commands, buttons and how a proposal is shown in
+  a chat, rewritten here against NEAR.
+
+**What is new for NEAR (built in the window).**
+
+- Orbits, governance modules for an unmodified Sputnik DAO: one engine, ten
+  modules, swapped by a single proposal without moving the treasury.
+- A DAO-owned staking vault with vote snapshots and conviction locks, and a
+  NEP-141 governance token with an optional cap.
+- Changing token by proposal, with a migrator that swaps holders' old tokens
+  for new ones and stakes them.
+- A guard: signers who confirm what passes before it runs, on and off by
+  proposal.
+- The bot for Telegram and Discord, deploying each DAO from shared global
+  contracts, with treasury actions on Rhea, LiNEAR, Meta Pool, NearX, NEAR
+  Intents, Aave on Base and Hyperliquid through Chain Signatures, and
+  proposal pages.
+
+**Libraries.** near-sdk, near-contract-standards, `uint` (contracts);
+near-api-js, grammY and its runner, discord.js, viem, @msgpack/msgpack,
+the Supabase and AWS KMS SDKs (bot); Sputnik DAO v2, unmodified. Much of
+the code was written with AI coding agents.
 
 ## How it works
 
@@ -52,9 +92,11 @@ This repository holds both halves:
 | Piece | What it is |
 | --- | --- |
 | **Core** | An unmodified [Sputnik DAO](https://github.com/near-daos/sputnik-dao-contract). It holds the treasury and executes proposals. Its one governance member is the orbit, so nothing reaches the treasury except what governance passed. |
-| **Orbit** | The governance module: one contract per model, nine in all. Members propose and decide in the orbit under its rules; when a proposal passes, the orbit's single vote executes it on the core. |
+| **Orbit** | The governance module: one contract per model, ten in all. Members propose and decide in the orbit under its rules; when a proposal passes, the orbit's single vote executes it on the core. |
 | **Staking** | One per DAO, owned by the core. Members stake the DAO's token here, and stake is voting weight. Every orbit reads it by snapshot, so stakes survive a model switch. |
-| **Token** | The DAO's own fixed-supply token (NEP-141). Whoever creates the DAO receives the whole supply and distributes it. |
+| **Token** | The DAO's own token (NEP-141). Whoever creates the DAO receives the initial supply and distributes it. With a cap, the DAO can mint more by proposal, never past the cap counting everything ever minted (burned tokens included); without one, the supply is fixed. |
+| **Guard** (optional) | Signers between the orbit and the core, as Spaces' GuardWrapper: what passes runs only once enough of them confirm it. They can confirm or reject, never start anything. |
+| **Migrator** (after a token change) | Swaps the old token for the new one at a fixed ratio. |
 | **Factory** | Creates each core. Protean runs its own copy of Sputnik's newer factory (`sputnik.protean.testnet`); the official one works too. |
 | **Bot** | Turns chat commands into NEAR transactions, signed by each member's own account. It holds no special power over any DAO. |
 
@@ -67,7 +109,9 @@ A DAO called `ark`, running token-weighted governance, gets:
 | `ark.sputnik.protean.testnet` | The core and treasury |
 | `token.ark.protean.testnet` | The ARK token |
 | `staking.ark.protean.testnet` | Stakes and their history |
-| `tw.ark.protean.testnet` | The orbit (`tw` token-weighted, `qv` quadratic, `lq` liquid, `op` optimistic, `cv` conviction, `dg` delegate, `st` sortition, `sw` sowellian, `dm` decision markets) |
+| `tw.ark.protean.testnet` | The orbit (`tw` token-weighted, `qv` quadratic, `lq` liquid, `op` optimistic, `cv` conviction, `dg` delegate, `st` sortition, `sw` sowellian, `dm` decision markets, `bd` board); `tw2`… after switching back to a model |
+| `guard.ark.protean.testnet` | A guard, if the DAO turns one on |
+| `token2`, `staking2`, `migrator2` | After a token change: the new token, its staking vault, and the migrator |
 
 Each chat member gets an account too: `tg<Telegram user id>.protean.testnet`
 (`dc…` on Discord).
@@ -105,22 +149,40 @@ next to live data read from the orbit.
 - The bot serves the website this data over
   `/api/proposals/<network>/<account>/<id>` (`bot/src/proposalPages.js`).
 
-### Switching models
+### Changing how the DAO is run
 
-`/switchmodel quadratic` creates a new orbit running the new model and
-proposes handing it the core. The proposal goes through the current
-model's own rules. If it passes, a single policy change on the core swaps
-the old orbit for the new one. Before approving, the old orbit checks that
-the new one really belongs to this DAO.
+Each change is one proposal under the current rules. The bot prepares the
+new contracts first (they have no power yet), and executing the proposal
+hands the DAO over in a single action: one policy change on the core, or
+behind a guard, one call to the guard.
 
-The treasury and the stakes never move. Proposals still open in the old
-orbit can't execute after the switch.
+| Change | Command | What happens |
+| --- | --- | --- |
+| Model | `/switchmodel quadratic` | A new orbit takes the core. Before handing it over, the old orbit checks the new one belongs to this DAO and that its staking vault is this DAO's and holds its token. Stakes carry over. |
+| To or from a board | `/switchmodel board me alice bob`, `/switchmodel tokenWeighted` | A board is an orbit too: members vote one seat one vote. `/setboard` changes the members by proposal. Boards created on the core itself, before board orbits, move to one the same way. |
+| Token | `/changetoken NOVA 2 [cap] [model]` | The bot creates the new token (its whole initial supply held by a migrator), its staking vault, and an orbit on it; the old token's holders vote. Afterwards `/migrate all` unstakes a member's old stake and swaps it, staked in the new vault, in one command. Old orbits still pay out their own escrows in the old token. |
+| Guard on | `/guard on 2 30d me alice bob` | The core's member becomes the guard, whose governance is the orbit. Passed proposals become instructions; signers `/confirm` or `/reject`. The same orbit carries on: it reads the core's policy each time it executes and sends to the guard. |
+| Model behind a guard | `/switchmodel quadratic` | The guard moves to the new orbit once the signers confirm; the core isn't touched. |
+| New signers | `/signers 1 dave` | Governance only, and only after the current signers' tenure: then it applies at once, without them. Signers can't entrench themselves, and governance can't remove them early. |
+| Guard off | `/guard off` | Hands the core back to the orbit, once the signers confirm. |
+
+The treasury never moves. Proposals still open in a replaced orbit can't
+execute; their escrows (bonds, positions, market units) stay claimable
+there. Older DAOs move to new contract versions the same way: by switching
+into a new orbit.
+
+DAOs created before guards run orbits that can't send through one, so the
+bot refuses `/guard on` for them until they run `/switchmodel <their model>`,
+which moves them to today's orbit with the same stakes. Their staking vault
+can't give conviction its locks behind a guard either, so the bot refuses
+that one switch; a token change brings a new vault. Their tokens have a
+fixed supply, so `/mint` says so.
 
 ### The governance models
 
 | Model | How it decides |
 | --- | --- |
-| `board` | Named members approve directly on the core by majority (Sputnik's own multisig, no orbit) |
+| `board` | Named members propose and vote, one seat one vote, no token voting; the DAO changes its members by proposal |
 | `tokenWeighted` | One staked token, one vote; quorum and approval thresholds, timelock |
 | `quadratic` | Voting weight is the square root of stake |
 | `liquid` | Vote directly, or delegate; delegated weight follows the chain to whoever voted |
@@ -176,13 +238,14 @@ tokens, staked NEAR, and its NEAR Intents balances.
 
 - **Nobody can change a DAO's contracts.** Contract accounts have no keys,
   and their code is fixed by hash. A new version is a new hash, which a DAO
-  adopts only by switching models by proposal.
+  adopts only by switching to a new orbit by proposal.
 - **The treasury only does what governance passed.** The core's sole member
   is the orbit, and the core has no open "anyone can propose" role.
 - **Governance can't be broken by accident.** Every orbit refuses proposals
   that would:
   - replace the core's policy;
-  - remove or reshape its governance role, except by a proper swap;
+  - remove or reshape its governance role, except by a proper swap to an
+    orbit or guard bound to this DAO;
   - set a proposal bond or a proposal period under an hour.
 - **Votes can't count twice.** Stake is read at each proposal's snapshot,
   and conviction locks the stake that backs a proposal.
@@ -195,21 +258,25 @@ tokens, staked NEAR, and its NEAR Intents balances.
 
 | | NEAR |
 | --- | --- |
-| Publish the nine modules, staking and token (once per network) | ~255 (2.55 MB at 10× normal storage) |
+| Publish the ten modules, staking, token, migrator and guard (once per network) | ~300 (about 3 MB at 10× normal storage) |
 | Protean's Sputnik factory (once per network) | ~49 |
 | Each DAO, through Protean's factory | ~0.6 (~6.6 through `sputnikv2.testnet`, which still stores a full copy of the DAO code in each DAO) |
 | A model switch | ~0.25 for the new orbit |
+| A token change | ~0.45: token, vault, migrator and orbit |
+| A guard | ~0.55, most of it paying for the instructions it stores |
 | Each active member | ~0.38 held for gas (returned after every call), plus ~0.01 staking storage |
 
 ## Repository layout
 
 ```
 orbits/                    Rust contracts (Cargo workspace)
-  modules/                 the nine governance modules, one contract each
+  modules/                 the ten governance modules, one contract each
   orbit/                   the engine the modules are built from (a feature per model)
   orbit-staking/           a DAO's staking contract: stake history, locks
   orbit-common/            which proposals may reach the core; the calls to it
-  governance-token/        fixed-supply NEP-141 token
+  orbit-guard/             signers who confirm what passes before it runs
+  orbit-migrator/          swaps an old token for the new one after a token change
+  governance-token/        NEP-141 token: initial supply, optional cap, minted only by the DAO
   core-tests/              checks against the real Sputnik contract
   testing/mock-signer/     a stand-in Chain Signatures signer for local runs
   deployments/             published code hashes, per network
@@ -230,7 +297,7 @@ supabase/schema.sql        the bot's database
 cd orbits && cargo test
 ```
 
-Expect 70 tests to pass. Among other things, they show that:
+Expect 101 tests to pass. Among other things, they show that:
 
 - a Sputnik DAO whose only member is an orbit executes what the orbit passes,
   refuses everyone else, and moves to a new orbit in one proposal;
@@ -246,7 +313,7 @@ Expect 70 tests to pass. Among other things, they show that:
 cd bot && npm install && npm test
 ```
 
-Expect `pass 75`. The commands run against a fake chain.
+Expect `pass 84`. The commands run against a fake chain.
 
 ### 3. A local NEAR node
 
@@ -254,7 +321,9 @@ A sandbox runs everything against the real contracts, at no cost.
 `./bot/scripts/sandbox-prepare.sh` gets the node and every contract. Then:
 
 - `sandbox-flow.js` runs a DAO's whole life and every integration;
-- `sandbox-models.js` runs each model's own mechanics.
+- `sandbox-models.js` runs each model's own mechanics;
+- `sandbox-governance.js` mints, moves to a board and back, changes the
+  token, and runs a guard through all its steps.
 
 See [docs/sandbox.md](docs/sandbox.md).
 
@@ -270,7 +339,7 @@ You need:
 ```bash
 # Build the contracts (needs cargo-near)
 cd orbits
-for c in modules/* orbit-staking governance-token; do (cd $c && cargo near build non-reproducible-wasm); done
+for c in modules/* orbit-staking governance-token orbit-migrator orbit-guard; do (cd $c && cargo near build non-reproducible-wasm); done
 
 # Configure, then publish the contracts once as global contracts
 cd ../bot
@@ -309,15 +378,16 @@ Voting periods default to an hour so a whole lifecycle fits in a demo;
 
 | | |
 | --- | --- |
-| Setup | `/createdao <name> <SYMBOL> <supply> [model] [members...]` · `/link <dao> [orbit]` · `/unlink` · `/switchmodel <model> [members...]` |
-| Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` · `/tip <amount>` (as a reply to someone's message; or name an account) |
+| Setup | `/createdao <name> <SYMBOL> <supply> [cap] [model] [members...]` · `/link <dao> [orbit]` · `/unlink` · `/switchmodel <model> [members...]` · `/changetoken <SYMBOL> <ratio> [cap] [model] [members...]` · `/setboard <quorum> <members...>` · `/guard [on <threshold> <tenure> <signers...> \| off]` · `/signers <threshold> <signers...>` |
+| Wallet | `/wallet` · `/stake` · `/unstake` · `/send <amount> <NEAR\|token> <account>` · `/tip <amount>` (as a reply to someone's message; or name an account) · `/migrate <amount\|all> [keep]` (after a token change) |
 | The DAO | `/dao` · `/treasury` · `/proposals` · `/proposal <id>` · `/council` |
-| Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` |
+| Proposing | `/pay <amount> <NEAR\|token> <account> <description>` · `/signal <text>` · `/mint <amount> <account> <description>` (capped tokens) |
 | Treasury | `/swap <amount> <from> <to> [slippage%]` (on Rhea) · `/liquidstake <amount> [linear\|metapool\|nearx]` · `/liquidunstake <amount> [provider]` · `/liquidwithdraw [provider]` |
 | NEAR Intents | `/buy <amount> <from> <to>[@chain] [slippage%]` · `/paychain <amount> <token>@<chain> <address> <description>` · `/intentsstatus <id>` · `/intentswithdraw <amount> <token>` |
 | EVM (Chain Signatures) | `/evm` · `/aave supply\|withdraw <amount\|all> [USDC\|ETH]` (Aave on Base) |
 | Hyperliquid | `/hyperliquid` · `/hlagent` (the bot only) · `/hlrevoke [name]` · `/hlsend <amount> <address>` · `/hlmove <amount\|all> perps\|spot` · `/hltraders add\|remove <account>` · `/hllimits size <usd>\|leverage <n>\|markets <coins>` · `/long <coin> <usd> [leverage]` · `/short <coin> <usd> [leverage]` · `/close <coin>` |
 | Deciding | `/vote <id> for\|against\|abstain` · `/execute <id>` · `/cancel <id>` |
+| Guard signers | `/confirm <instruction>` · `/reject <instruction>` · `/revoke <instruction>` · `/resend <instruction>` |
 | Optimistic | `/challenge <id>` · `/resolvechallenge <id>` |
 | Liquid | `/delegate <account>` · `/undelegate` · `/resolve <id> [delegator]` |
 | Conviction | `/support <id>` · `/withdrawsupport` · `/queue <id>` |
@@ -341,7 +411,8 @@ as typing it, as whoever pressed it, with the same checks.
 | Token-weighted, quadratic, liquid, delegate, sortition | For / Against / Abstain while voting |
 | Optimistic | Challenge in the challenge window; For / Against / Abstain once challenged |
 | Conviction | Support / Queue |
-| Board | Approve / Reject |
+| Board | For / Against / Abstain (boards on the core itself: Approve / Reject) |
+| Guard instructions | Confirm / Reject |
 | Sowellian | For / Against / Abstain (approval) → Back YES / Back NO → It worked / It didn't (or Resolve from the oracle) → Dispute, or Lock it in → It worked / It didn't (adjudication), Close the vote → Claim winnings |
 | Decision markets | Buy pass / Buy fail / Sell pass / Sell fail and Split NEAR / Split tokens while trading → Redeem |
 
@@ -363,6 +434,8 @@ The bot also posts on its own, each notice with those buttons:
 - a challenge (optimistic), positions opening (Sowellian), markets opening
   (decision markets)
 - each step of a Sowellian outcome: measured, proposed, disputed, resolved
+- behind a guard, each new instruction (with Confirm and Reject), and when
+  one runs, is rejected or expires
 
 Each command is defined once, in `bot/src/platforms/commands/`, and both
 Telegram and Discord run it.

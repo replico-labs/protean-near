@@ -60,7 +60,7 @@ step "Sputnik DAO (the factory and the DAO contract), at the revision Orbits is 
 "$ROOT/bot/scripts/build-sputnik.sh"
 
 step "Orbits: the nine modules, staking, the token, and the sandbox signer"
-for dir in "$ROOT"/orbits/modules/* "$ROOT/orbits/orbit-staking" "$ROOT/orbits/governance-token" "$ROOT/orbits/testing/mock-signer"; do
+for dir in "$ROOT"/orbits/modules/* "$ROOT/orbits/orbit-staking" "$ROOT/orbits/governance-token" "$ROOT/orbits/orbit-migrator" "$ROOT/orbits/orbit-guard" "$ROOT/orbits/testing/mock-signer"; do
   (cd "$dir" && cargo near build non-reproducible-wasm >/dev/null)
 done
 cp "$ROOT/orbits/target/near/governance_token/governance_token.wasm" "$ROOT/orbits/target/near/mock_signer/mock_signer.wasm" "$WASM/"

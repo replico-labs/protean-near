@@ -1,6 +1,6 @@
 import { NEAR_DECIMALS } from "../../near/amounts.js";
 import * as kinds from "../../near/kinds.js";
-import { measurementPeriod } from "../../near/models.js";
+import { measurementPeriod, isCoreBoard } from "../../near/models.js";
 import { services } from "../services.js";
 import { UserError, reply, requireDao, userAccount, parseAmount, parseAccountId, tokenInfo, explain } from "../helpers.js";
 import { loadProposal, describeProposal } from "../proposals.js";
@@ -12,11 +12,11 @@ export async function makeProposal(ctx, dao, description, kind) {
   if (!description) throw new UserError("Add a description after the details, so people know what it's for.");
   const account = await userAccount(ctx);
   // The orbit holds a refundable deposit for the proposal's storage; long proposals need more than gas money.
-  if (dao.model !== "board") await services.wallets.ensureGas(account.accountId, services.orbit.proposalDeposit(description, JSON.stringify(kind)));
+  if (!isCoreBoard(dao)) await services.wallets.ensureGas(account.accountId, services.orbit.proposalDeposit(description, JSON.stringify(kind)));
   const token = await tokenInfo(dao);
   if (dao.model === "sowellian") return proposeSowellian(ctx, dao, account, token, description, kind);
   const id = await explain(
-    () => (dao.model === "board" ? services.core.addProposal(account, dao.daoId, description, kind) : services.orbit.propose(account, dao.orbitId, description, kind)),
+    () => (isCoreBoard(dao) ? services.core.addProposal(account, dao.daoId, description, kind) : services.orbit.propose(account, dao.orbitId, description, kind)),
     {
       ERR_NOT_COUNCIL_MEMBER: "Only council members can propose in this DAO.",
       ERR_PERMISSION_DENIED: "Only the board's members can propose.",
@@ -31,7 +31,7 @@ export async function makeProposal(ctx, dao, description, kind) {
 
 /** The new proposal's reply; with proposal pages, the proposer also gets a private link to add its details. */
 async function announce(ctx, dao, id, state, text, buttons) {
-  if (dao.model !== "board") markAnnounced(ctx.platform, ctx.chatId, id, state);
+  if (!isCoreBoard(dao)) markAnnounced(ctx.platform, ctx.chatId, id, state);
   const page = await proposalCreated(ctx, dao, id);
   return reply(page ? `${text}\n\n📄 The proposer can add a title, summary and links on its page: I've sent them a private link.` : text, { buttons, private: page });
 }

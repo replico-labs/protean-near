@@ -31,13 +31,18 @@ export function kindFixtures() {
     intentsDepositNear: kinds.intentsDeposit({ intents: "intents.near", wrapNear: "wrap.near", token: "NEAR", amount: 10n ** 24n, depositAddress: "c".repeat(64) }),
     intentsDepositToken: kinds.intentsDeposit({ intents: "intents.near", wrapNear: "wrap.near", token: "usdc.testnet", amount: 1_020_000n, depositAddress: "d".repeat(64) }),
     intentsWithdraw: kinds.intentsWithdraw({ intents: "intents.near", token: "usdc.testnet", amount: 1_000_000n, receiver: "mydao.sputnikv2.testnet" }),
+    mint: kinds.mint("token.mydao.orbits.testnet", "maya.testnet", 500n * 10n ** 18n),
+    setBoard: kinds.setBoard("bd.mydao.orbits.testnet", ["a.testnet", "b.testnet", "c.testnet"], 2),
+    setGovernance: kinds.setGovernance("guard.mydao.orbits.testnet", "q.mydao.orbits.testnet"),
+    setSigners: kinds.setSigners("guard.mydao.orbits.testnet", ["s1.testnet", "s2.testnet"], 2),
+    migrateTreasury: kinds.migrateTreasury("token.mydao.orbits.testnet", "migrator2.mydao.orbits.testnet", 1000n * 10n ** 18n),
   };
 }
 
 /** The orbit settings the bot creates for each model, for a 1,000,000-token supply; core-tests checks the orbit accepts them. */
 export function modelFixtures() {
   const supply = 1_000_000n * 10n ** 18n;
-  return Object.fromEntries(Object.keys(MODELS).filter((m) => m !== "board").map((m) => [m, modelConfig(m, supply, 3)]));
+  return Object.fromEntries(Object.keys(MODELS).map((m) => [m, modelConfig(m, supply, 3)]));
 }
 
 /** The Sputnik policies the bot creates DAOs with; core-tests creates a DAO with each. */

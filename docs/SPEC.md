@@ -77,9 +77,13 @@ orbit, that replaces the `governance` group `{old}` with `{new}`.
 
 - **Never two proposals.** Removing the old orbit first leaves nobody able to
   approve adding the new one, and the DAO is locked for good.
-- **Check the new orbit first.** Before approving, the old orbit calls the new
-  orbit's `get_dao()` and approves only if it returns this core. A wrong or
-  uninitialised address then fails safely.
+- **Check the new member first.** Before sending a swap, the old orbit reads
+  the target's `get_binding()`: `{dao_id, staking_id, token_id, governance}`.
+  It sends the swap only to an orbit bound to this core whose staking vault
+  (`get_dao`, `get_token`) belongs to this core and holds that orbit's token
+  (a token change passes; a foreign vault doesn't), or to a guard bound to
+  this core whose governance is this orbit. A wrong or uninitialised address
+  fails safely, and the proposal can be retried.
 - **Open proposals in the old orbit are lost.** After a swap, the old orbit's
   remaining proposals can't execute: the core no longer accepts its votes.
 - **Optional guardian.** A DAO may add a second role (for example a small
@@ -89,7 +93,7 @@ orbit, that replaces the `governance` group `{old}` with `{new}`.
 ## The orbit modules
 
 Each model is its own contract, an Orbits module (`orbits/modules/<model>`),
-nine in all. A DAO's orbit is an instance of one module; switching models
+ten in all. A DAO's orbit is an instance of one module; switching models
 means a swap to an orbit of another module.
 
 The modules are built from one engine crate (`orbits/orbit`), where each
@@ -129,6 +133,52 @@ changes the role's permissions or names more than one orbit; and policy
 parameters that set a proposal bond or a proposal period under an hour.
 Other roles (for example a guardian) may change freely.
 
+## Guards
+
+A guard (`orbits/orbit-guard`) is a signer council between the orbit and
+the core, as Spaces' GuardWrapper. With a guard on, the core's governance
+member is the guard, and the guard's `governance` is the orbit.
+
+- **Routing.** On every `execute`, the orbit reads the core's policy. If
+  the member is the orbit, it adds and approves on the core as above. If
+  the member is a guard whose `get_governance()` is the orbit, it sends
+  the proposal to the guard (`propose_instruction`) and is done; the
+  proposal shows the guard and instruction id. Otherwise nothing is sent.
+  The same orbit therefore works with or without a guard: turning one on
+  is a single swap to the guard, and off is a swap back.
+- **Signers** `confirm`, `reject` or `revoke`. At `threshold` confirmations
+  the guard adds the instruction to the core and approves it; once enough
+  reject that the threshold can't be reached, it's dead. Instructions not
+  confirmed within `instruction_ttl` expire. Signers can never propose.
+- **The guard refuses** the same core-locking kinds the orbit does.
+- **Switching model behind a guard**: governance proposes a function call
+  from the core to the guard's `set_governance(new orbit)`. Once the
+  signers confirm it, the core calls it, and the guard checks the new
+  orbit's binding and vault as a swap would before moving to it.
+- **New signers**: a call to the guard's `set_signers` proposed by
+  governance applies at once without the signers, but only after the
+  current tenure has ended (refused before); a new tenure starts.
+- The staking contract also accepts the orbit behind a guard as its locker.
+
+## Token changes
+
+A DAO changes its token by swapping to an orbit on the new token. Before
+the vote, the bot creates the new token (its whole initial supply, the old
+supply times the ratio, minted to a migrator), its staking vault (owned by
+the core) and the migrator (`orbits/orbit-migrator`). The old token's
+stakers vote; the swap check accepts the new orbit because its vault
+belongs to the core and holds its token.
+
+Holders then send the old token to the migrator with `ft_transfer_call`.
+The empty message sends the new token back; `"stake"` stakes it in the new
+vault for them (`{"stake_for": account}`). If delivery fails, the old
+tokens are returned. The old orbit keeps paying its own escrows (bonds,
+positions, market units) in the old token.
+
+The token (`orbits/governance-token`) has an initial supply and an optional
+cap on everything ever minted, burned tokens included; only its minter, the
+core, mints, so minting is a proposal. Without a cap the supply is fixed.
+
 ## Models
 
 The rules follow Protean's EVM contracts (Spaces). Times are nanoseconds,
@@ -136,7 +186,7 @@ shares basis points.
 
 | Model | Rules |
 | --- | --- |
-| Board | No orbit: the members are the core's governance role and pass proposals by simple majority. Sputnik's own multisig |
+| Board | Named members propose and vote one seat one vote, with no term; a quorum of members must vote and `approval_bps` of them approve. The core changes the members with the orbit's `set_board`. (DAOs created before board orbits have their members on the core itself, Sputnik's own multisig, and move to a board orbit by swap.) |
 | Token-weighted | Turnout (for + against + abstain) must reach `quorum_bps` of total stake at the snapshot, and for / (for + against) must reach `approval_bps` |
 | Quadratic | As token-weighted, with each vote weighing the square root of stake and quorum measured against the square root of total stake |
 | Liquid | As token-weighted; anyone may delegate. `resolve_delegated_vote` follows a delegator's chain (up to 5 hops) to the first account that voted and adds the delegator's stake to that choice |
@@ -165,7 +215,8 @@ not by an orbit:
 - Because the staking contract belongs to the core, a new orbit reads the
   same stakes: switching models keeps every member's stake.
 - The orbit governing the core can become the *locker* (`claim_locker`,
-  checked against the core's policy). Conviction locks stake while it backs a
+  checked against the core's policy, or against the guard that is its
+  member). Conviction locks stake while it backs a
   proposal. Locks are kept per locker, so a replaced orbit can still release
   what it locked.
 - Members pay for their own checkpoints from a NEAR balance deposited with
@@ -173,7 +224,7 @@ not by an orbit:
 
 ## Global contracts and cost
 
-The nine modules and the staking and token contracts are each published once as a NEAR
+The ten modules and the staking, token, migrator and guard contracts are each published once as a NEAR
 global contract, by code hash (`bot/scripts/publish-contracts.js`, hashes in
 `orbits/deployments/<network>.json`). Each DAO's orbit, token and staking
 accounts use that code by hash and store none of their own, as the official
@@ -183,10 +234,12 @@ by swapping orbits.
 
 | | Cost |
 | --- | --- |
-| Publish all nine modules, staking and token (once per network) | ~255 NEAR: 2.55 MB at 10× normal storage |
+| Publish all ten modules, staking, token, migrator and guard (once per network) | ~300 NEAR: about 3 MB at 10× normal storage |
 | ...or staking, token and one module | ~57 NEAR; each further module ~23-28 NEAR |
 | Each DAO (`/createdao`) | ~0.6 NEAR through a 3.2 factory: the core's 0.1 NEAR deposit (mostly kept in its treasury), state funding for its accounts, and registrations. `sputnikv2.testnet` still stores the DAO code in each DAO and needs ~5.4 NEAR more |
 | A model switch | ~0.25 NEAR for the new orbit |
+| A token change | ~0.45 NEAR: token, vault, migrator and orbit |
+| A guard | ~0.55 NEAR, mostly for the instructions it stores |
 | Each member who stakes | ~0.01 NEAR staking storage, paid from their account |
 
 Check the live factory's version with `get_contracts_metadata` (3.2 or later

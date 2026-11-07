@@ -1,7 +1,8 @@
 //! A DAO's staking contract, shared by whichever orbit governs the DAO.
 //!
 //! Members stake the DAO's token here (`ft_transfer_call` with an empty
-//! message) and take it back with `unstake`. Every change is recorded as a
+//! message, or `{"stake_for": account}` to stake for someone else, as a
+//! token migrator does) and take it back with `unstake`. Every change is recorded as a
 //! checkpoint, so an orbit asks "what did this account have staked at the
 //! proposal's snapshot?" with `weights_at`. Weight fixed at a snapshot can't
 //! be moved and used again, so stake can be withdrawn at any time, as with
@@ -10,8 +11,9 @@
 //! The contract belongs to the DAO (its Sputnik core), not to an orbit, so
 //! members keep their stake when the DAO switches models. The orbit that
 //! governs the DAO can become the *locker* (`claim_locker`) and lock stake,
-//! which conviction voting needs. Locks are kept per locker: an orbit that
-//! is replaced can still release what it locked.
+//! which conviction voting needs, also from behind a guard (the core's
+//! member is then the guard, whose governance is the orbit). Locks are kept
+//! per locker: an orbit that is replaced can still release what it locked.
 //!
 //! Storage: each member pays for their own checkpoints from a NEAR balance
 //! they deposit with `storage_deposit`.
@@ -27,6 +29,8 @@ use near_sdk::{
 const GAS_FT_TRANSFER: Gas = Gas::from_tgas(15);
 const GAS_GET_POLICY: Gas = Gas::from_tgas(10);
 const GAS_CALLBACK: Gas = Gas::from_tgas(10);
+/// on_policy, with room to ask a guard who it answers to.
+const GAS_ON_POLICY: Gas = Gas::from_tgas(30);
 /// The least a member must deposit to register: their account record and a
 /// few dozen checkpoints.
 const MIN_STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(10);
@@ -125,13 +129,21 @@ impl Contract {
 
     // --- Staking ---
 
-    /// NEP-141 receiver: the DAO's token sent with an empty message is
-    /// staked for the sender. Anything else is refused and returned.
+    /// NEP-141 receiver: the DAO's token is staked for the sender (empty
+    /// message) or for `{"stake_for": account}`, who must be registered.
+    /// Anything else is refused and returned.
     pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
         require!(env::predecessor_account_id() == self.token_id, "ERR_WRONG_TOKEN");
-        require!(msg.is_empty(), "ERR_INVALID_MESSAGE");
-        require!(self.members.contains_key(&sender_id), "ERR_NOT_REGISTERED: call storage_deposit first");
-        self.change_stake(&sender_id, amount.0, true);
+        let staker = if msg.is_empty() {
+            sender_id
+        } else {
+            serde_json::from_str::<Value>(&msg)
+                .ok()
+                .and_then(|m| m.get("stake_for")?.as_str()?.parse::<AccountId>().ok())
+                .unwrap_or_else(|| env::panic_str("ERR_INVALID_MESSAGE"))
+        };
+        require!(self.members.contains_key(&staker), "ERR_NOT_REGISTERED: call storage_deposit first");
+        self.change_stake(&staker, amount.0, true);
         PromiseOrValue::Value(U128(0))
     }
 
@@ -171,30 +183,47 @@ impl Contract {
     }
 
     /// Makes the caller the locker if it is the orbit governing the DAO:
-    /// the only member of the core's "governance" role.
+    /// the only member of the core's "governance" role, or the governance
+    /// of the guard that is.
     pub fn claim_locker(&mut self) -> Promise {
         Promise::new(self.dao_id.clone())
             .function_call("get_policy", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_GET_POLICY)
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_CALLBACK)
+                    .with_static_gas(GAS_ON_POLICY)
                     .on_policy(env::predecessor_account_id()),
             )
     }
 
     #[private]
-    pub fn on_policy(&mut self, claimant: AccountId) -> bool {
-        let governs = env::promise_result_checked(0, MAX_RESULT_LEN)
+    pub fn on_policy(&mut self, claimant: AccountId) -> PromiseOrValue<bool> {
+        let members = env::promise_result_checked(0, MAX_RESULT_LEN)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .and_then(|policy| governance_members(&policy))
-            .is_some_and(|members| members == [claimant.to_string()]);
-        if governs {
-            self.locker = Some(claimant);
-        } else {
-            log!("{} doesn't govern {}; locker unchanged", claimant, self.dao_id);
+            .unwrap_or_default();
+        match members.as_slice() {
+            [member] if *member == claimant.as_str() => PromiseOrValue::Value(self.set_claimed(claimant, true)),
+            // Perhaps a guard: does it answer to the claimant?
+            [member] => match member.parse::<AccountId>() {
+                Ok(guard) => PromiseOrValue::Promise(
+                    Promise::new(guard)
+                        .function_call("get_governance", b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_GET_POLICY)
+                        .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CALLBACK).on_guard_governance(claimant)),
+                ),
+                Err(_) => PromiseOrValue::Value(self.set_claimed(claimant, false)),
+            },
+            _ => PromiseOrValue::Value(self.set_claimed(claimant, false)),
         }
-        governs
+    }
+
+    #[private]
+    pub fn on_guard_governance(&mut self, claimant: AccountId) -> bool {
+        let governs = env::promise_result_checked(0, MAX_RESULT_LEN)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<AccountId>(&bytes).ok())
+            .is_some_and(|governance| governance == claimant);
+        self.set_claimed(claimant, governs)
     }
 
     /// Locks all of `account_id`'s unlocked stake for the caller, the
@@ -266,6 +295,15 @@ impl Contract {
 }
 
 impl Contract {
+    fn set_claimed(&mut self, claimant: AccountId, governs: bool) -> bool {
+        if governs {
+            self.locker = Some(claimant);
+        } else {
+            log!("{} doesn't govern {}; locker unchanged", claimant, self.dao_id);
+        }
+        governs
+    }
+
     /// Adds or removes stake and records the new amounts. The member's
     /// storage balance pays for the storage this uses.
     fn change_stake(&mut self, account_id: &AccountId, amount: u128, add: bool) {

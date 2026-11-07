@@ -1,4 +1,16 @@
 {
+  "board": {
+    "Board": {
+      "council": {
+        "quorum": 2,
+        "approval_bps": 5000,
+        "voting_delay": "0",
+        "voting_period": "3600000000000",
+        "timelock": "60000000000",
+        "execution_period": "259200000000000"
+      }
+    }
+  },
   "tokenWeighted": {
     "TokenWeighted": {
       "quorum_bps": 2000,

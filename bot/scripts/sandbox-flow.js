@@ -409,19 +409,21 @@ await assert.rejects(
 assert.equal(await accountExists(wrong), false);
 console.log("  ✔ the token-weighted module refuses quadratic settings, and nothing is created");
 
-step("A board DAO: Sputnik's own multisig, no orbit");
+step("A board DAO: a board orbit, one member one vote");
 await run(1, "unlink", { expect: /unlinked|no longer/i });
 await run(1, `createdao ${name}b BRD 1000 board ${alice} ${bob} ${carol}`, { expect: /is live/ });
 await operatorAccount().transfer({ receiverId: link().daoId, amount: nearToYocto("2") });
 await run(1, `pay 1 NEAR ${carol} board payout`, { expect: /#0\b/ });
 await run(1, "vote 0 for");
-await run(2, "vote 0 for", { expect: /executed|approved|passed/i });
-const proposal = await view(link().daoId, "get_proposal", { id: 0 });
-assert.equal(proposal.status, "Approved");
-console.log("  ✔ two of three board members approved and Sputnik paid out");
-const boardPage = (await pages.getProposalPage("near-sandbox", link().daoId, "0")).body;
-assert.deepEqual(boardPage.live.facts.map((f) => [f.label, f.value]), [["Approve", "2"], ["Reject", "0"]]);
+await run(2, "vote 0 for");
+const boardPayee = await availableBalance(carol);
+await advance(2.5);
+await run(3, "execute 0", { expect: /executed/i });
+assert.ok((await availableBalance(carol)) - boardPayee >= nearToYocto("0.99"));
+console.log("  ✔ two of three board members voted for it, and it paid out");
+const boardPage = (await pages.getProposalPage("near-sandbox", link().orbitId, "0")).body;
+assert.deepEqual(boardPage.live.facts.slice(0, 2).map((f) => [f.label, f.value]), [["For", "2"], ["Against", "0"]]);
 assert.equal(boardPage.live.proposer, alice);
-console.log(`  ✔ the board's page lives at the core: /p/near-sandbox/${link().daoId}/0`);
+console.log(`  ✔ the board's page lives at its orbit: /p/near-sandbox/${link().orbitId}/0`);
 
 console.log("\nAll checks passed.");

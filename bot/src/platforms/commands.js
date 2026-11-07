@@ -15,6 +15,7 @@ import { TREASURY_COMMANDS } from "./commands/treasury.js";
 import { INTENTS_COMMANDS } from "./commands/intents.js";
 import { EVM_COMMANDS } from "./commands/evm.js";
 import { HYPERLIQUID_COMMANDS } from "./commands/hyperliquid.js";
+import { GOVERNANCE_COMMANDS } from "./commands/governance.js";
 
 /**
  * Platform-neutral commands for the Telegram and Discord front-ends.
@@ -73,6 +74,7 @@ export const COMMANDS = {
   ...INTENTS_COMMANDS,
   ...EVM_COMMANDS,
   ...HYPERLIQUID_COMMANDS,
+  ...GOVERNANCE_COMMANDS,
   ...DECIDING_COMMANDS,
   ...COUNCIL_COMMANDS,
   ...MARKET_COMMANDS,

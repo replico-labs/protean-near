@@ -22,8 +22,8 @@ test("amounts convert without floating point", () => {
   assert.equal(fromUnits(0n, 24), "0");
 });
 
-test("every model but board has its own module contract and orbit prefix", () => {
-  for (const model of Object.keys(MODELS).filter((m) => m !== "board")) {
+test("every model has its own module contract and orbit prefix", () => {
+  for (const model of Object.keys(MODELS)) {
     const contract = MODULE_CONTRACT[model];
     assert.ok(contract, model);
     assert.ok(ORBIT_PREFIX[model], model);
@@ -31,7 +31,7 @@ test("every model but board has its own module contract and orbit prefix", () =>
     const dir = contract.replace(/^orbit_/, "").replaceAll("_", "-");
     assert.ok(existsSync(new URL(`../../orbits/modules/${dir}/Cargo.toml`, import.meta.url)), contract);
   }
-  assert.equal(new Set(Object.values(MODULE_CONTRACT)).size, 9);
+  assert.equal(new Set(Object.values(MODULE_CONTRACT)).size, 10);
 });
 
 test("the committed fixtures match kinds.js and models.js", () => {
@@ -46,12 +46,12 @@ test("kinds read as sentences", () => {
   assert.equal(describeKind(f.transferNear, { formatNear: () => "1.5" }), "Pay 1.5 NEAR to maya.testnet");
   assert.match(describeKind(f.transferToken), /^Pay 250000000000000000000 of token\.mydao/);
   assert.equal(describeKind(f.signal), "Signal vote (nothing is executed)");
-  assert.equal(describeKind(f.swap), "Swap governance to q.mydao.orbits.testnet");
+  assert.equal(describeKind(f.swap), "Hand the DAO to q.mydao.orbits.testnet");
 });
 
 test("buttons round-trip and refuse forgeries", () => {
   assert.deepEqual(proposalButtons("tokenWeighted", 7, "Active")[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against", "vote 7 abstain"]);
-  assert.deepEqual(proposalButtons("board", 7, "InProgress")[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against"]);
+  assert.deepEqual(proposalButtons("coreBoard", 7, "InProgress")[0].map((b) => b.cmd), ["vote 7 for", "vote 7 against"]);
   assert.deepEqual(proposalButtons("optimistic", 7, "ChallengeWindow")[0].map((b) => b.cmd), ["challenge 7"]);
   assert.deepEqual(proposalButtons("conviction", 7, "Active")[0].map((b) => b.cmd), ["support 7", "queue 7"]);
   assert.deepEqual(proposalButtons("tokenWeighted", 7, "Succeeded")[0], [{ label: "▶️ Execute", cmd: "execute 7" }]);

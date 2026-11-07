@@ -88,7 +88,7 @@ function marketRows(id, phase) {
 export function proposalButtons(model, id, state, page = null, market = {}) {
   const rows = [];
   const now = market.now ?? 0n;
-  if (model === "board") {
+  if (model === "coreBoard") {
     if (state === "InProgress") rows.push([{ label: "✅ Approve", cmd: `vote ${id} for` }, { label: "❌ Reject", cmd: `vote ${id} against` }]);
   } else if (model === "conviction") {
     if (state === "Active") rows.push([{ label: "💪 Support", cmd: `support ${id}` }, { label: "⏳ Queue", cmd: `queue ${id}` }]);
@@ -132,6 +132,8 @@ export const BUTTON_COMMANDS = new Set([
   "position", "proposeresolution", "dispute", "adjudicate", "finalizeresolution", "claimposition",
   // Decision markets
   "split", "trade", "redeem",
+  // Guard signers
+  "confirm", "reject",
   // A second step (buttonMenus.js): how much, or "are you sure".
   "ask",
 ]);

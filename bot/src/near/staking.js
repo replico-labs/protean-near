@@ -35,6 +35,37 @@ export async function sendToken(account, tokenId, receiverId, amount) {
   return outcome.transaction?.hash;
 }
 
+/**
+ * A capped token's supply: { totalSupply, totalMinted, maxSupply, mintable,
+ * minter }, or null for a token from before caps (fixed supply).
+ */
+export async function getSupply(tokenId) {
+  const s = await view(tokenId, "get_supply").catch(() => null);
+  if (!s) return null;
+  return { totalSupply: BigInt(s.total_supply), totalMinted: BigInt(s.total_minted), maxSupply: BigInt(s.max_supply), mintable: BigInt(s.mintable), minter: s.minter };
+}
+
+// --- Token migration ---
+
+export const getMigrator = (migratorId) => view(migratorId, "get_info");
+export const migrationQuote = async (migratorId, amount) => BigInt(await view(migratorId, "quote", { amount: String(amount) }));
+
+/**
+ * Swaps `amount` of the old token for the new one in `migratorId`. With
+ * `stakeIn` (the new staking vault), the new tokens are staked there for
+ * the caller, who is registered there first; otherwise they're sent to the
+ * caller, registered with the new token first.
+ */
+export async function migrate(account, { oldTokenId, newTokenId, migratorId, stakeIn = null }, amount) {
+  if (stakeIn) {
+    const member = await getMember(stakeIn, account.accountId);
+    if (!member || member.storage < MIN_STAKING_STORAGE) await call(account, stakeIn, "storage_deposit", {}, { deposit: STAKING_STORAGE, gas: SIMPLE_GAS });
+  } else {
+    await ensureTokenStorage(account, newTokenId);
+  }
+  await call(account, oldTokenId, "ft_transfer_call", { receiver_id: migratorId, amount: String(amount), msg: stakeIn ? "stake" : "" }, { deposit: ONE_YOCTO });
+}
+
 // --- Staking ---
 
 /** The member's stake, locked and available amounts, or null if they never registered. */

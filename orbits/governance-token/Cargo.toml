@@ -3,7 +3,7 @@ name = "governance-token"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "A fixed-supply NEP-141 token for an Orbits DAO, minted once to its owner"
+description = "The NEP-141 token of an Orbits DAO: an initial supply, a cap on everything ever minted, and minting only by the DAO"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

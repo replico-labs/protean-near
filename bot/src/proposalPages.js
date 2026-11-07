@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { EXPLORER_URL, NETWORK_ID } from "./config.js";
 import { describeKind, kindTokens } from "./near/kinds.js";
+import { isCoreBoard } from "./near/models.js";
 import { readable } from "./near/evm.js";
 import { services } from "./platforms/services.js";
 import { formatNear, tokenInfo } from "./platforms/helpers.js";
@@ -64,7 +65,7 @@ function siteUrl() {
 const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 
 /** The account a chat's proposals live in: its orbit, or a board's core. */
-export const pageAccount = (link) => (link?.model === "board" ? link.daoId : link?.orbitId) ?? null;
+export const pageAccount = (link) => (isCoreBoard(link) ? link.daoId : link?.orbitId) ?? null;
 
 /** The public page for proposal `id` of a chat's DAO, or null when pages aren't set up. */
 export function proposalPageUrl(link, id) {
@@ -389,7 +390,7 @@ function marketFacts(e, passTwap, failTwap, token) {
 /** What /proposal shows, as data the page renders (null if there's no such proposal). */
 async function liveProposal(link, id) {
   const token = await tokenInfo(link);
-  const board = link.model === "board";
+  const board = isCoreBoard(link);
   const p = board ? await services.core.getCoreProposal(link.daoId, id).catch(() => null) : await services.orbit.getProposal(link.orbitId, id).catch(() => null);
   if (!p) return null;
   await services.tokens.load(kindTokens(p.kind));
@@ -416,7 +417,7 @@ async function liveProposal(link, id) {
         backed = Boolean(e.opened_at);
       }
     } else {
-      const unit = link.model === "delegate" || link.model === "sortition" ? String : link.model === "quadratic" ? (v) => `${v} (√ weight)` : fmt;
+      const unit = link.model === "delegate" || link.model === "sortition" || link.model === "board" ? String : link.model === "quadratic" ? (v) => `${v} (√ weight)` : fmt;
       facts.push({ label: "For", value: unit(p.for_votes) }, { label: "Against", value: unit(p.against_votes) }, { label: "Abstain", value: unit(p.abstain_votes) }, { label: "Voters", value: String(p.voters) });
       times.push({ label: "Voting opens", at: seconds(p.start) }, { label: p.state === "ChallengeWindow" ? "Challenges close" : "Voting ends", at: seconds(p.end) });
     }

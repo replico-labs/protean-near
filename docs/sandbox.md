@@ -44,7 +44,7 @@ In another tab:
 ```bash
 cd bot
 node scripts/sandbox-setup.js ../.sandbox/home ../.sandbox/wasm     # Sputnik factory + operator, writes .env.sandbox
-node --env-file=.env.sandbox scripts/publish-contracts.js --yes     # all eleven, as global contracts
+node --env-file=.env.sandbox scripts/publish-contracts.js --yes     # all fourteen, as global contracts
 node scripts/sandbox-venues.js ../.sandbox/home ../.sandbox/wasm    # Rhea, LiNEAR, NEAR Intents, the signer
 node --env-file=.env.sandbox scripts/sandbox-flow.js                # the main flow and the integrations
 node --env-file=.env.sandbox scripts/sandbox-models.js              # each governance model's own mechanics
@@ -72,7 +72,7 @@ Expect `All checks passed.` after these steps:
 | `/support`, `/queue`, `/execute` | Support locks stake (unstaking is refused), conviction builds over time, the proposal queues and executes |
 | Every module | All nine modules start on chain, each from its own published contract |
 | Wrong settings | The token-weighted module refuses quadratic settings, and no account is created |
-| Board DAO | Two of three members approve on Sputnik directly, and it pays out |
+| Board DAO | A board orbit: two of three members vote for a payout, and it executes |
 | `/swap 1 NEAR USDC` (with venues) | The DAO sells 1 NEAR on Rhea and receives the quoted USDC |
 | `/swap 2 USDC NEAR 0.5%` | A token swap the other way, with a tighter minimum |
 | A swap whose minimum isn't met | Someone moves the price first; the swap reverts and the treasury keeps its funds (as wNEAR) |

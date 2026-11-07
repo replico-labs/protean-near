@@ -50,9 +50,28 @@ const SPUTNIK_KINDS: [&str; 17] = [
 pub enum KindClass {
     /// Sent to the core as is.
     Normal,
-    /// Hands the core to `new_orbit`. The orbit checks that `new_orbit` is
-    /// bound to this core before sending it.
+    /// Hands the core to `new_orbit`: an orbit, or a guard in front of one.
+    /// The orbit checks its binding (`Binding`) before sending it.
     Swap { new_orbit: AccountId },
+}
+
+/// What an orbit or a guard is bound to, from its `get_binding` view. An
+/// orbit names its staking vault and token; a guard names the orbit it
+/// takes instructions from.
+#[near_sdk::near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Binding {
+    pub dao_id: AccountId,
+    pub staking_id: Option<AccountId>,
+    pub token_id: Option<AccountId>,
+    pub governance: Option<AccountId>,
+}
+
+/// Members of the core's governance role, from its `get_policy` JSON.
+pub fn governance_members(policy: &Value) -> Option<Vec<AccountId>> {
+    let roles = policy.get("roles")?.as_array()?;
+    let role = roles.iter().find(|r| r.get("name").and_then(Value::as_str) == Some(GOVERNANCE_ROLE))?;
+    role.get("kind")?.get("Group")?.as_array()?.iter().map(|m| m.as_str()?.parse().ok()).collect()
 }
 
 /// The core's `governance` role with `orbit` as its only member.
@@ -182,6 +201,13 @@ mod tests {
 
     fn acc(s: &str) -> AccountId {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn governance_members_are_read_from_the_policy() {
+        let policy = core_policy(&acc("orbit1.testnet"));
+        assert_eq!(governance_members(&policy), Some(vec![acc("orbit1.testnet")]));
+        assert_eq!(governance_members(&json!({ "roles": [] })), None);
     }
 
     #[test]

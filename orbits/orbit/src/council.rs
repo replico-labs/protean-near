@@ -6,6 +6,7 @@
 //! - Sortition: the council is drawn at random from stakers who opted in.
 //!   NEAR's block random seed replaces Spaces' Pyth Entropy: it needs no
 //!   oracle or fee, but the block producer could bias it.
+//! - Board: named members with no term; the DAO changes them by proposal.
 
 use super::*;
 
@@ -319,6 +320,22 @@ impl Contract {
 
     pub fn get_pool(&self) -> Vec<AccountId> {
         self.pool.iter().cloned().collect()
+    }
+}
+
+#[cfg(feature = "board")]
+#[near]
+impl Contract {
+    /// Replaces the board's members and quorum. Only the DAO's core calls
+    /// it: a passed proposal with a function call to this orbit.
+    pub fn set_board(&mut self, members: Vec<AccountId>, quorum: u16) {
+        require!(env::predecessor_account_id() == self.dao_id, "ERR_NOT_DAO");
+        check_board(&members, quorum);
+        match &mut self.model {
+            Model::Board(b) => b.council.quorum = quorum,
+            _ => env::panic_str("ERR_NOT_BOARD"),
+        }
+        self.council = members;
     }
 }
 

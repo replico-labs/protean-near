@@ -1,7 +1,9 @@
 import * as orbit from "../near/orbit.js";
 import * as staking from "../near/staking.js";
 import * as core from "../near/core.js";
+import * as guard from "../near/guard.js";
 import * as deploy from "../near/deploy.js";
+import * as versions from "../near/versions.js";
 import * as rhea from "../near/rhea.js";
 import * as lst from "../near/lst.js";
 import * as tokens from "../near/tokens.js";
@@ -23,7 +25,9 @@ export const services = {
   orbit,
   staking,
   core,
+  guard,
   deploy,
+  versions,
   rhea,
   lst,
   tokens,

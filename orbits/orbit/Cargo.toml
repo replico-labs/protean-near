@@ -15,7 +15,7 @@ uint = { version = "0.10", default-features = false }
 
 [features]
 # Every model, for tests; each module turns the defaults off and picks one.
-default = ["token-weighted", "quadratic", "liquid", "optimistic", "conviction", "delegate", "sortition", "sowellian", "decision-markets"]
+default = ["token-weighted", "quadratic", "liquid", "optimistic", "conviction", "delegate", "sortition", "sowellian", "decision-markets", "board"]
 token-weighted = ["ballot"]
 quadratic = ["ballot"]
 liquid = ["ballot"]
@@ -25,6 +25,7 @@ delegate = ["council"]
 sortition = ["council"]
 sowellian = ["ballot"]
 decision-markets = []
+board = ["council"]
 # Shared by several models: the stake-weighted vote, and council seats.
 ballot = []
 council = []
