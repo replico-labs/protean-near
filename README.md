@@ -60,6 +60,10 @@ near-api-js, grammY and its runner, discord.js, viem, @msgpack/msgpack,
 the Supabase and AWS KMS SDKs (bot); Sputnik DAO v2, unmodified. Much of
 the code was written with AI coding agents.
 
+**Disclosure.** The same team also submitted
+[MARVII-NEAR](https://github.com/replico-labs/marvii-near). The two projects
+share no code.
+
 ## How it works
 
 ### The big picture
