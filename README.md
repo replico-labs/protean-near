@@ -26,8 +26,7 @@ This repository holds both halves:
 Protean on NEAR was built for [NEAR HACKATHON](https://nearhackathon.com),
 from 2026-10-20 (the first commit, after the announcement on 2026-10-19) to
 the end of development on 2026-11-14. Everything in this repository was
-written in that window; the history is in the commits, and the tag
-`hackathon-submission` marks what was submitted.
+written in that window; the history is in the commits.
 
 **What existed before (baseline, not judged).** Protean already runs on EVM
 chains: Solidity contracts and a Telegram bot, in
@@ -59,10 +58,6 @@ chains: Solidity contracts and a Telegram bot, in
 near-api-js, grammY and its runner, discord.js, viem, @msgpack/msgpack,
 the Supabase and AWS KMS SDKs (bot); Sputnik DAO v2, unmodified. Much of
 the code was written with AI coding agents.
-
-**Disclosure.** The same team also submitted
-[MARVII-NEAR](https://github.com/replico-labs/marvii-near). The two projects
-share no code.
 
 ## How it works
 
@@ -460,3 +455,13 @@ Telegram and Discord run it.
   [Aave](https://aave.com/) and [Hyperliquid](https://hyperliquid.xyz/).
 - Protean's EVM contracts and bot ([Spaces](https://github.com/replico-labs/Spaces))
   as the model rules and the chat layer's base.
+
+## Disclosure
+
+The same team also submitted
+[MARVII-NEAR](https://github.com/replico-labs/marvii-near). The two projects
+share no code.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Marvin Sunday.
