@@ -14,8 +14,10 @@ This repository holds both halves:
   Sputnik DAO.
 - **The Protean bot**, which runs the DAO from the chat.
 
-> Status: live on NEAR testnet. Try the bot at
-> [@proteannear_bot](https://t.me/proteannear_bot); the contracts are in
+> Status: live on NEAR testnet. Try the bot on Telegram at
+> [@proteannear_bot](https://t.me/proteannear_bot), or
+> [add it to a Discord server](https://discord.com/oauth2/authorize?client_id=1569451177593016350&scope=bot+applications.commands&permissions=274877991936);
+> the contracts are in
 > `orbits/deployments/testnet.json`. Aave runs on Base Sepolia and trading
 > on Hyperliquid testnet, both through Chain Signatures. NEAR Intents exists
 > only on mainnet, so it's tested against its contracts on a local NEAR node
@@ -357,7 +359,9 @@ npm start                                # Telegram, and Discord if its token is
 To keep the bot running without your computer, host it: the repository
 includes a `Dockerfile`, a Railway config and a Render Blueprint. See [docs/hosting.md](docs/hosting.md).
 
-In a Telegram group, with the bot as a group admin:
+In a Telegram group, with the bot as a group admin (or in a Discord channel,
+after adding the bot with the link at the top; the same commands are slash
+commands there, and `/createdao` needs the Manage Server permission):
 
 | Do | See |
 | --- | --- |
