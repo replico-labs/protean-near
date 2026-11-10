@@ -58,8 +58,7 @@ chains: Solidity contracts and a Telegram bot, in
 
 **Libraries.** near-sdk, near-contract-standards, `uint` (contracts);
 near-api-js, grammY and its runner, discord.js, viem, @msgpack/msgpack,
-the Supabase and AWS KMS SDKs (bot); Sputnik DAO v2, unmodified. Much of
-the code was written with AI coding agents.
+the Supabase and AWS KMS SDKs (bot); Sputnik DAO v2, unmodified.
 
 ## How it works
 
